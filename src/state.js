@@ -1,6 +1,6 @@
 // Editor state — single source of truth
 
-import { Volume } from './volume.js';
+import { Volume } from './core/Volume.js';
 
 export const state = {
     volumes: [],
@@ -8,12 +8,23 @@ export const state = {
     nextVolumeId: 1,
     nextConnectionId: 1,
     selectedFace: null,     // { volumeId, axis, side, position, bounds: { u0, u1, v0, v1 } }
-    tool: 'push_pull',      // 'push_pull' | 'door'
+    tool: 'push_pull',      // 'push_pull' | 'door' | 'extrude'
     doorWidth: 6,
     doorHeight: 8,
     pushStep: 4,
     undoStack: [],
     maxUndo: 50,
+
+    // Extrude tool state (transient — not serialized or in undo snapshots)
+    extrudeSelections: [],    // Array of { volumeId, axis, side, bounds, position }
+    extrudeDirection: null,   // { axis, side } — locked after first selection
+    extrudedVolumes: [],      // Array of volumeId — tracks created volumes for re-push
+    extrudeParentIds: [],     // Array of volumeId — parent volumes (excluded from collision)
+    extrudeGrowSide: null,    // 'min' | 'max' — the side to push when extending protrusions
+    extrudeVolumeParentMap: {},  // { [protrusionId]: parentId }
+    extrudePhase: 'idle',     // 'idle' | 'selecting' | 'extruded'
+    extrudeWidth: 1,
+    extrudeHeight: 1,
 };
 
 export function saveUndoState() {

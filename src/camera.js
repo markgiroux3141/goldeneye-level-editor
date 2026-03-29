@@ -29,5 +29,4 @@ export function updateCamera(camera, dt) {
     if (isKeyDown('KeyA')) camera.position.addScaledVector(right, -speed);
     if (isKeyDown('KeyD')) camera.position.addScaledVector(right, speed);
     if (isKeyDown('Space')) camera.position.y += speed;
-    if (isKeyDown('ShiftLeft') || isKeyDown('ShiftRight')) camera.position.y -= speed;
 }

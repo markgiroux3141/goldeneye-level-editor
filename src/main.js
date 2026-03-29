@@ -4,17 +4,20 @@ import * as THREE from 'three';
 import { initScene, scene, renderer, camera } from './scene.js';
 import { initInput, initKeyActions, onKeyDown, isPointerLocked } from './input.js';
 import { updateCamera } from './camera.js';
-import { Volume, WORLD_SCALE } from './volume.js';
+import { Volume, WORLD_SCALE } from './core/Volume.js';
 import { state, deserializeLevel } from './state.js';
 import { initMaterials, getWallMaterial } from './materials.js';
 import { buildVolumeGeometry } from './geometry.js';
-import { getConnectionsForFace, computeDoorPlacement } from './connection.js';
+import { getConnectionsForFace, computeDoorPlacement } from './core/Connection.js';
 import { pickFace } from './raycaster.js';
 import { showMessage, updateHUD, initHUD } from './hud.js';
+import { loadFromLocalStorage } from './io/LevelStorage.js';
 import {
     pushSelectedFace, pullSelectedFace,
     deleteSelectedVolume, placeDoorOnFace, undoAction,
     saveLevel, loadLevel,
+    addExtrudeSelection, executeExtrude, reExtrudeVolumes,
+    extrudeUntilBlocked, clearExtrudeState, computeExtrudePlacement,
 } from './actions.js';
 
 // ============================================================
@@ -32,6 +35,12 @@ const volumeMeshes = new Map();
 // Door preview wireframe
 let doorPreviewMesh = null;
 const doorPreviewMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+
+// Extrude preview group
+const extrudePreviewGroup = new THREE.Group();
+scene.add(extrudePreviewGroup);
+const extrudeSelectionMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+const extrudeHoverMat = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
 
 // ============================================================
 // MESH MANAGEMENT
@@ -86,7 +95,20 @@ function removeVolumeMesh(volId) {
 }
 
 // ============================================================
-// MOUSE CLICK — FACE SELECTION / DOOR PLACEMENT
+// TOOL CYCLING
+// ============================================================
+const TOOL_CYCLE = ['push_pull', 'door', 'extrude'];
+const TOOL_NAMES = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude' };
+
+function cycleToolForward() {
+    const idx = TOOL_CYCLE.indexOf(state.tool);
+    state.tool = TOOL_CYCLE[(idx + 1) % TOOL_CYCLE.length];
+    if (state.tool !== 'extrude') clearExtrudeState();
+    showMessage('Tool: ' + TOOL_NAMES[state.tool]);
+}
+
+// ============================================================
+// MOUSE CLICK — FACE SELECTION / DOOR PLACEMENT / EXTRUDE SELECT
 // ============================================================
 document.addEventListener('mousedown', (e) => {
     if (!isPointerLocked() || e.button !== 0) return;
@@ -94,8 +116,22 @@ document.addEventListener('mousedown', (e) => {
     const hit = pickFace(camera, volumeMeshes);
 
     if (!hit) {
+        if (state.tool === 'extrude') {
+            clearExtrudeState();
+        }
         state.selectedFace = null;
         rebuildAllVolumes();
+        return;
+    }
+
+    if (state.tool === 'extrude') {
+        // Don't select tunnel faces
+        if (hit.bounds.u0 === 0 && hit.bounds.u1 === 0) return;
+
+        if (!e.shiftKey) {
+            clearExtrudeState();
+        }
+        addExtrudeSelection(hit.volumeId, hit.axis, hit.side, hit.point, showMessage);
         return;
     }
 
@@ -113,13 +149,36 @@ document.addEventListener('mousedown', (e) => {
 // KEY ACTIONS
 // ============================================================
 onKeyDown((e) => {
-    if ((e.key === '=' || e.key === '+') && state.selectedFace) {
+    // Extrude tool: +/- for extrude/shrink, Shift++ for extrude until blocked
+    if (state.tool === 'extrude') {
+        if (e.key === '=' || e.key === '+') {
+            e.preventDefault();
+            if (e.shiftKey && state.extrudePhase === 'extruded') {
+                extrudeUntilBlocked(showMessage, rebuildAllVolumes);
+            } else if (state.extrudePhase === 'selecting') {
+                executeExtrude(showMessage, rebuildAllVolumes);
+            } else if (state.extrudePhase === 'extruded') {
+                reExtrudeVolumes('push', showMessage, rebuildAllVolumes);
+            }
+            return;
+        }
+        if (e.key === '-') {
+            e.preventDefault();
+            if (state.extrudePhase === 'extruded') {
+                reExtrudeVolumes('pull', showMessage, rebuildAllVolumes);
+            }
+            return;
+        }
+    }
+
+    // Push/Pull tool: +/- for push/pull
+    if ((e.key === '=' || e.key === '+') && state.selectedFace && state.tool === 'push_pull') {
         e.preventDefault();
         pushSelectedFace(showMessage, rebuildVolume, rebuildAllVolumes);
         return;
     }
 
-    if (e.key === '-' && state.selectedFace) {
+    if (e.key === '-' && state.selectedFace && state.tool === 'push_pull') {
         e.preventDefault();
         pullSelectedFace(showMessage, rebuildVolume);
         return;
@@ -127,8 +186,7 @@ onKeyDown((e) => {
 
     if (e.code === 'KeyT' && isPointerLocked()) {
         e.preventDefault();
-        state.tool = state.tool === 'push_pull' ? 'door' : 'push_pull';
-        showMessage('Tool: ' + (state.tool === 'push_pull' ? 'Push/Pull' : 'Door'));
+        cycleToolForward();
         return;
     }
 
@@ -141,6 +199,7 @@ onKeyDown((e) => {
 
     if (e.ctrlKey && e.code === 'KeyZ') {
         e.preventDefault();
+        clearExtrudeState();
         undoAction(showMessage, rebuildAllVolumes);
         return;
     }
@@ -158,6 +217,9 @@ onKeyDown((e) => {
     }
 
     if (e.code === 'Escape') {
+        if (state.tool === 'extrude') {
+            clearExtrudeState();
+        }
         state.selectedFace = null;
         rebuildAllVolumes();
     }
@@ -172,7 +234,7 @@ rebuildVolume(firstVolume);
 
 // Try loading saved level
 try {
-    const saved = localStorage.getItem('goldeneye-level');
+    const saved = loadFromLocalStorage();
     if (saved) {
         const data = JSON.parse(saved);
         if (data.volumes && data.volumes.length > 0) {
@@ -203,7 +265,7 @@ function updateDoorPreview() {
     const vol = state.volumes.find(v => v.id === hit.volumeId);
     if (!vol) return;
 
-    const doorBounds = computeDoorPlacement(vol, hit.axis, hit.side, hit.point);
+    const doorBounds = computeDoorPlacement(vol, hit.axis, hit.side, hit.point, state.doorWidth, state.doorHeight);
     if (!doorBounds) return;
 
     const { u0, u1, v0, v1 } = doorBounds;
@@ -238,6 +300,78 @@ function updateDoorPreview() {
 }
 
 // ============================================================
+// EXTRUDE PREVIEW
+// ============================================================
+function makeRectPoints(axis, side, position, bounds) {
+    const { u0, u1, v0, v1 } = bounds;
+    const W = WORLD_SCALE;
+    const offset = 0.02;
+
+    if (axis === 'x') {
+        const px = position * W + (side === 'min' ? offset : -offset);
+        return [
+            new THREE.Vector3(px, v0*W, u0*W),
+            new THREE.Vector3(px, v0*W, u1*W),
+            new THREE.Vector3(px, v1*W, u1*W),
+            new THREE.Vector3(px, v1*W, u0*W),
+            new THREE.Vector3(px, v0*W, u0*W),
+        ];
+    } else if (axis === 'y') {
+        const py = position * W + (side === 'min' ? offset : -offset);
+        return [
+            new THREE.Vector3(u0*W, py, v0*W),
+            new THREE.Vector3(u1*W, py, v0*W),
+            new THREE.Vector3(u1*W, py, v1*W),
+            new THREE.Vector3(u0*W, py, v1*W),
+            new THREE.Vector3(u0*W, py, v0*W),
+        ];
+    } else { // z
+        const pz = position * W + (side === 'min' ? offset : -offset);
+        return [
+            new THREE.Vector3(u0*W, v0*W, pz),
+            new THREE.Vector3(u1*W, v0*W, pz),
+            new THREE.Vector3(u1*W, v1*W, pz),
+            new THREE.Vector3(u0*W, v1*W, pz),
+            new THREE.Vector3(u0*W, v0*W, pz),
+        ];
+    }
+}
+
+function updateExtrudePreview() {
+    // Clear previous preview objects
+    while (extrudePreviewGroup.children.length > 0) {
+        const child = extrudePreviewGroup.children[0];
+        extrudePreviewGroup.remove(child);
+        if (child.geometry) child.geometry.dispose();
+    }
+
+    if (state.tool !== 'extrude' || !isPointerLocked()) return;
+
+    // Draw committed selections as green rectangles
+    for (const sel of state.extrudeSelections) {
+        const points = makeRectPoints(sel.axis, sel.side, sel.position, sel.bounds);
+        const geo = new THREE.BufferGeometry().setFromPoints(points);
+        extrudePreviewGroup.add(new THREE.Line(geo, extrudeSelectionMat));
+    }
+
+    // Draw hover preview as yellow rectangle (only in idle or selecting phase)
+    if (state.extrudePhase === 'idle' || state.extrudePhase === 'selecting') {
+        const hit = pickFace(camera, volumeMeshes);
+        if (hit && hit.volumeId && !(hit.bounds.u0 === 0 && hit.bounds.u1 === 0)) {
+            const vol = state.volumes.find(v => v.id === hit.volumeId);
+            if (vol) {
+                const hoverBounds = computeExtrudePlacement(vol, hit.axis, hit.side, hit.point, state.extrudeWidth, state.extrudeHeight);
+                if (hoverBounds) {
+                    const points = makeRectPoints(hit.axis, hit.side, hit.position, hoverBounds);
+                    const geo = new THREE.BufferGeometry().setFromPoints(points);
+                    extrudePreviewGroup.add(new THREE.Line(geo, extrudeHoverMat));
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
 // RENDER LOOP
 // ============================================================
 const clock = new THREE.Clock();
@@ -247,6 +381,7 @@ function animate() {
     const dt = clock.getDelta();
     updateCamera(camera, dt);
     updateDoorPreview();
+    updateExtrudePreview();
     updateHUD(camera);
     renderer.render(scene, camera);
 }

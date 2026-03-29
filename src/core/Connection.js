@@ -1,8 +1,7 @@
 // Connection — a shared opening between two volumes (or an open exit)
 // Replaces the old door concept. A connection defines where volumes connect.
 
-import { WALL_THICKNESS, WORLD_SCALE } from './volume.js';
-import { state } from './state.js';
+import { WALL_THICKNESS, WORLD_SCALE } from './Volume.js';
 
 // A connection links two volumes through a wall opening
 // volBId can be null if the exit hasn't been extended yet
@@ -18,7 +17,7 @@ export function createConnection(id, volAId, axis, sideOnA, bounds, volBId) {
 }
 
 // Compute door placement from a hit point on a volume's wall
-export function computeDoorPlacement(vol, axis, side, hitPoint) {
+export function computeDoorPlacement(vol, axis, side, hitPoint, doorWidth, doorHeight) {
     if (axis === 'y') return null; // no doors on floor/ceiling
 
     let faceW, faceH, localU;
@@ -35,22 +34,19 @@ export function computeDoorPlacement(vol, axis, side, hitPoint) {
         localU = hx - vol.x;
     }
 
-    const dw = state.doorWidth;
-    const dh = state.doorHeight;
+    if (faceW < doorWidth || faceH < doorHeight) return null;
 
-    if (faceW < dw || faceH < dh) return null;
-
-    let doorU = Math.round(localU - dw / 2);
-    doorU = Math.max(0, Math.min(faceW - dw, doorU));
+    let doorU = Math.round(localU - doorWidth / 2);
+    doorU = Math.max(0, Math.min(faceW - doorWidth, doorU));
 
     // Convert to world-space bounds
     let u0, u1, v0, v1;
     if (axis === 'x') {
-        u0 = vol.z + doorU; u1 = u0 + dw;
-        v0 = vol.y; v1 = v0 + dh;
+        u0 = vol.z + doorU; u1 = u0 + doorWidth;
+        v0 = vol.y; v1 = v0 + doorHeight;
     } else {
-        u0 = vol.x + doorU; u1 = u0 + dw;
-        v0 = vol.y; v1 = v0 + dh;
+        u0 = vol.x + doorU; u1 = u0 + doorWidth;
+        v0 = vol.y; v1 = v0 + doorHeight;
     }
 
     return { u0, u1, v0, v1 };

@@ -8,24 +8,13 @@
 // No type tags. Geometry determines behavior.
 
 import * as THREE from 'three';
-import { WALL_THICKNESS, WORLD_SCALE } from './volume.js';
+import { WALL_THICKNESS, WORLD_SCALE } from './core/Volume.js';
+import { facesMatch, getVolumeFaceBounds, getFacePosition } from './core/Face.js';
+
+// Re-export for any consumers that imported facesMatch from here
+export { facesMatch };
 
 const S = WORLD_SCALE; // shorthand for vertex scaling
-
-// ============================================================
-// FACE COMPARISON — used for highlight matching
-// ============================================================
-export function facesMatch(a, b) {
-    if (!a || !b) return false;
-    return a.volumeId === b.volumeId &&
-           a.axis === b.axis &&
-           a.side === b.side &&
-           a.position === b.position &&
-           a.bounds.u0 === b.bounds.u0 &&
-           a.bounds.u1 === b.bounds.u1 &&
-           a.bounds.v0 === b.bounds.v0 &&
-           a.bounds.v1 === b.bounds.v1;
-}
 
 // ============================================================
 // GEOMETRY BUILDER
@@ -41,23 +30,35 @@ class GeometryBuilder {
         this.vertexCount = 0;
     }
 
-    addQuad(p0, p1, p2, p3, normal, uv0, uv1, uv2, uv3, faceId, highlight) {
+    addQuad(p0, p1, p2, p3, normal, uv0, uv1, uv2, uv3, faceId, highlight, flip = false) {
         const base = this.vertexCount;
 
-        // Scale positions from WT units to world units
-        this.positions.push(
-            p0[0]*S, p0[1]*S, p0[2]*S, p1[0]*S, p1[1]*S, p1[2]*S,
-            p2[0]*S, p2[1]*S, p2[2]*S, p3[0]*S, p3[1]*S, p3[2]*S,
-        );
-
-        for (let i = 0; i < 4; i++) {
-            this.normals.push(normal[0], normal[1], normal[2]);
+        if (flip) {
+            // Reverse winding: swap p1 and p3 (and their UVs)
+            this.positions.push(
+                p0[0]*S, p0[1]*S, p0[2]*S, p3[0]*S, p3[1]*S, p3[2]*S,
+                p2[0]*S, p2[1]*S, p2[2]*S, p1[0]*S, p1[1]*S, p1[2]*S,
+            );
+            this.uvs.push(
+                uv0[0], uv0[1], uv3[0], uv3[1],
+                uv2[0], uv2[1], uv1[0], uv1[1],
+            );
+            for (let i = 0; i < 4; i++) {
+                this.normals.push(-normal[0], -normal[1], -normal[2]);
+            }
+        } else {
+            this.positions.push(
+                p0[0]*S, p0[1]*S, p0[2]*S, p1[0]*S, p1[1]*S, p1[2]*S,
+                p2[0]*S, p2[1]*S, p2[2]*S, p3[0]*S, p3[1]*S, p3[2]*S,
+            );
+            this.uvs.push(
+                uv0[0], uv0[1], uv1[0], uv1[1],
+                uv2[0], uv2[1], uv3[0], uv3[1],
+            );
+            for (let i = 0; i < 4; i++) {
+                this.normals.push(normal[0], normal[1], normal[2]);
+            }
         }
-
-        this.uvs.push(
-            uv0[0], uv0[1], uv1[0], uv1[1],
-            uv2[0], uv2[1], uv3[0], uv3[1],
-        );
 
         const r = highlight ? 0.4 : 1.0;
         const g = highlight ? 1.0 : 1.0;
@@ -81,24 +82,6 @@ class GeometryBuilder {
 }
 
 // ============================================================
-// HELPER: get tangent axis ranges for a face
-// For axis 'x': u = z, v = y
-// For axis 'y': u = x, v = z
-// For axis 'z': u = x, v = y
-// ============================================================
-function getVolumeFaceBounds(vol, axis) {
-    if (axis === 'x') return { u0: vol.z, u1: vol.z + vol.d, v0: vol.y, v1: vol.y + vol.h };
-    if (axis === 'y') return { u0: vol.x, u1: vol.x + vol.w, v0: vol.z, v1: vol.z + vol.d };
-    return { u0: vol.x, u1: vol.x + vol.w, v0: vol.y, v1: vol.y + vol.h };
-}
-
-function getFacePosition(vol, axis, side) {
-    if (axis === 'x') return side === 'min' ? vol.x : vol.x + vol.w;
-    if (axis === 'y') return side === 'min' ? vol.y : vol.y + vol.h;
-    return side === 'min' ? vol.z : vol.z + vol.d;
-}
-
-// ============================================================
 // VOLUME GEOMETRY GENERATION
 // ============================================================
 
@@ -113,6 +96,8 @@ export function buildVolumeGeometry(vol, faceConnections, selectedFace) {
         { axis: 'z', side: 'min' }, { axis: 'z', side: 'max' },
     ];
 
+    const flip = !!vol.invertNormals;
+
     for (const face of faces) {
         // Find connections on this face
         const conns = faceConnections.filter(c => {
@@ -123,7 +108,7 @@ export function buildVolumeGeometry(vol, faceConnections, selectedFace) {
             }
             return false;
         });
-        buildFace(builder, vol, face.axis, face.side, conns, selectedFace);
+        buildFace(builder, vol, face.axis, face.side, conns, selectedFace, flip);
     }
 
     return { geometry: builder.build(), faceIds: builder.faceIds };
@@ -133,15 +118,15 @@ export function buildVolumeGeometry(vol, faceConnections, selectedFace) {
 // FACE BUILDERS
 // ============================================================
 
-function buildFace(builder, vol, axis, side, connections, selectedFace) {
+function buildFace(builder, vol, axis, side, connections, selectedFace, flip) {
     if (connections.length === 0) {
-        buildSolidFace(builder, vol, axis, side, selectedFace);
+        buildSolidFace(builder, vol, axis, side, selectedFace, flip);
     } else {
-        buildFaceWithConnections(builder, vol, axis, side, connections, selectedFace);
+        buildFaceWithConnections(builder, vol, axis, side, connections, selectedFace, flip);
     }
 }
 
-function buildSolidFace(builder, vol, axis, side, selectedFace) {
+function buildSolidFace(builder, vol, axis, side, selectedFace, flip = false) {
     const pos = getFacePosition(vol, axis, side);
     const bounds = getVolumeFaceBounds(vol, axis);
     const faceId = { volumeId: vol.id, axis, side, position: pos, bounds };
@@ -154,19 +139,19 @@ function buildSolidFace(builder, vol, axis, side, selectedFace) {
         const n = side === 'min' ? [1, 0, 0] : [-1, 0, 0];
         builder.addQuad(
             [pos, v0, u0], [pos, v0, u1], [pos, v1, u1], [pos, v1, u0],
-            n, [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl
+            n, [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, flip
         );
     } else if (axis === 'y') {
         const n = side === 'min' ? [0, 1, 0] : [0, -1, 0];
         builder.addQuad(
             [u0, pos, v0], [u1, pos, v0], [u1, pos, v1], [u0, pos, v1],
-            n, [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl
+            n, [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, flip
         );
     } else {
         const n = side === 'min' ? [0, 0, 1] : [0, 0, -1];
         builder.addQuad(
             [u0, v0, pos], [u1, v0, pos], [u1, v1, pos], [u0, v1, pos],
-            n, [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl
+            n, [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, flip
         );
     }
 }
@@ -175,7 +160,7 @@ function buildSolidFace(builder, vol, axis, side, selectedFace) {
 // FACE WITH CONNECTION OPENINGS
 // ============================================================
 
-function buildFaceWithConnections(builder, vol, axis, side, connections, selectedFace) {
+function buildFaceWithConnections(builder, vol, axis, side, connections, selectedFace, flip = false) {
     const innerPos = getFacePosition(vol, axis, side);
     const t = WALL_THICKNESS;
     const outerPos = side === 'min' ? innerPos - t : innerPos + t;

@@ -9,6 +9,7 @@ export class Volume {
         this.id = id;
         this.x = x; this.y = y; this.z = z;  // min corner of interior
         this.w = w; this.h = h; this.d = d;   // interior dimensions (integers >= 1)
+        this.invertNormals = false;            // true for protrusions (normals point outward)
     }
 
     get outerMinX() { return this.x - WALL_THICKNESS; }
@@ -26,14 +27,20 @@ export class Volume {
     get innerMaxZ() { return this.z + this.d; }
 
     clone() {
-        return new Volume(this.id, this.x, this.y, this.z, this.w, this.h, this.d);
+        const v = new Volume(this.id, this.x, this.y, this.z, this.w, this.h, this.d);
+        v.invertNormals = this.invertNormals;
+        return v;
     }
 
     toJSON() {
-        return { id: this.id, x: this.x, y: this.y, z: this.z, w: this.w, h: this.h, d: this.d };
+        const j = { id: this.id, x: this.x, y: this.y, z: this.z, w: this.w, h: this.h, d: this.d };
+        if (this.invertNormals) j.invertNormals = true;
+        return j;
     }
 
     static fromJSON(j) {
-        return new Volume(j.id, j.x, j.y, j.z, j.w, j.h, j.d);
+        const v = new Volume(j.id, j.x, j.y, j.z, j.w, j.h, j.d);
+        if (j.invertNormals) v.invertNormals = true;
+        return v;
     }
 }

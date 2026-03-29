@@ -1,10 +1,12 @@
 // Editor actions: push/pull, door cutting, save/load
 
-import * as THREE from 'three';
-import { Volume, WALL_THICKNESS } from './volume.js';
+import { Volume, WALL_THICKNESS, WORLD_SCALE } from './core/Volume.js';
 import { state, saveUndoState, undo, serializeLevel, deserializeLevel } from './state.js';
 import { canExtendVolume, canPlaceVolume, applyPush, applyPull } from './collision.js';
-import { computeDoorPlacement, connectionExistsAt, createConnection } from './connection.js';
+import { computeDoorPlacement, connectionExistsAt, createConnection } from './core/Connection.js';
+import { getVolumeFaceBounds, getFacePosition } from './core/Face.js';
+import { saveToLocalStorage } from './io/LevelStorage.js';
+import { downloadJson, uploadJson } from './io/LevelFileIO.js';
 
 // ============================================================
 // PUSH — unified logic based on face geometry
@@ -159,7 +161,7 @@ export function placeDoorOnFace(volumeId, axis, side, hitPoint, showMessage, reb
     const vol = state.volumes.find(v => v.id === volumeId);
     if (!vol) return;
 
-    const doorBounds = computeDoorPlacement(vol, axis, side, hitPoint);
+    const doorBounds = computeDoorPlacement(vol, axis, side, hitPoint, state.doorWidth, state.doorHeight);
     if (!doorBounds) {
         showMessage('Wall too small for a door');
         return;
@@ -281,45 +283,300 @@ export function undoAction(showMessage, rebuildAllCallback) {
 // ============================================================
 export function saveLevel(showMessage) {
     const json = serializeLevel();
-    localStorage.setItem('goldeneye-level', json);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = 'level.json'; a.click();
-    URL.revokeObjectURL(url);
+    saveToLocalStorage(json);
+    downloadJson(json);
     showMessage('Level saved');
 }
 
 export function loadLevel(showMessage, rebuildAllCallback) {
-    const input = document.createElement('input');
-    input.type = 'file'; input.accept = '.json';
-    input.onchange = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            try {
-                deserializeLevel(ev.target.result);
-                rebuildAllCallback();
-                showMessage('Level loaded');
-            } catch (err) { showMessage('Error loading level'); }
-        };
-        reader.readAsText(file);
-    };
-    input.click();
+    uploadJson().then((json) => {
+        try {
+            deserializeLevel(json);
+            rebuildAllCallback();
+            showMessage('Level loaded');
+        } catch (err) { showMessage('Error loading level'); }
+    }).catch(() => { /* user cancelled */ });
 }
 
 // ============================================================
-// HELPERS (duplicated from geometry.js to avoid circular deps)
+// EXTRUDE TOOL
 // ============================================================
-function getVolumeFaceBounds(vol, axis) {
-    if (axis === 'x') return { u0: vol.z, u1: vol.z + vol.d, v0: vol.y, v1: vol.y + vol.h };
-    if (axis === 'y') return { u0: vol.x, u1: vol.x + vol.w, v0: vol.z, v1: vol.z + vol.d };
-    return { u0: vol.x, u1: vol.x + vol.w, v0: vol.y, v1: vol.y + vol.h };
+
+// Compute a placement rectangle centered on hitPoint in both U and V,
+// clamped to wall bounds. Unlike computeDoorPlacement which is floor-anchored.
+export function computeExtrudePlacement(vol, axis, side, hitPoint, width, height) {
+    const hx = hitPoint.x / WORLD_SCALE;
+    const hy = hitPoint.y / WORLD_SCALE;
+    const hz = hitPoint.z / WORLD_SCALE;
+
+    let faceW, faceH, localU, localV;
+    if (axis === 'x') {
+        faceW = vol.d; faceH = vol.h;
+        localU = hz - vol.z;
+        localV = hy - vol.y;
+    } else if (axis === 'y') {
+        faceW = vol.w; faceH = vol.d;
+        localU = hx - vol.x;
+        localV = hz - vol.z;
+    } else { // z
+        faceW = vol.w; faceH = vol.h;
+        localU = hx - vol.x;
+        localV = hy - vol.y;
+    }
+
+    if (faceW < width || faceH < height) return null;
+
+    // Center on hit point, clamp to face bounds
+    let du = Math.round(localU - width / 2);
+    du = Math.max(0, Math.min(faceW - width, du));
+
+    let dv = Math.round(localV - height / 2);
+    dv = Math.max(0, Math.min(faceH - height, dv));
+
+    let u0, u1, v0, v1;
+    if (axis === 'x') {
+        u0 = vol.z + du; u1 = u0 + width;
+        v0 = vol.y + dv; v1 = v0 + height;
+    } else if (axis === 'y') {
+        u0 = vol.x + du; u1 = u0 + width;
+        v0 = vol.z + dv; v1 = v0 + height;
+    } else { // z
+        u0 = vol.x + du; u1 = u0 + width;
+        v0 = vol.y + dv; v1 = v0 + height;
+    }
+
+    return { u0, u1, v0, v1 };
 }
 
-function getFacePosition(vol, axis, side) {
-    if (axis === 'x') return side === 'min' ? vol.x : vol.x + vol.w;
-    if (axis === 'y') return side === 'min' ? vol.y : vol.y + vol.h;
-    return side === 'min' ? vol.z : vol.z + vol.d;
+// Check if two 2D rectangles overlap (bounds in u,v space)
+function boundsOverlap(a, b) {
+    return a.u0 < b.u1 && a.u1 > b.u0 && a.v0 < b.v1 && a.v1 > b.v0;
 }
+
+export function addExtrudeSelection(volumeId, axis, side, hitPoint, showMessage) {
+    // Reset if we were in extruded phase
+    if (state.extrudePhase === 'extruded') {
+        clearExtrudeState();
+    }
+
+    const vol = state.volumes.find(v => v.id === volumeId);
+    if (!vol) return false;
+
+    const bounds = computeExtrudePlacement(vol, axis, side, hitPoint, state.extrudeWidth, state.extrudeHeight);
+    if (!bounds) {
+        showMessage('Wall too small for extrusion');
+        return false;
+    }
+
+    // Lock direction on first selection
+    if (state.extrudeSelections.length === 0) {
+        state.extrudeDirection = { axis, side };
+    } else if (state.extrudeDirection.axis !== axis || state.extrudeDirection.side !== side) {
+        showMessage('All selections must face the same direction');
+        return false;
+    }
+
+    // Check overlap with other selections on the same face
+    for (const sel of state.extrudeSelections) {
+        if (sel.volumeId === volumeId && sel.axis === axis && sel.side === side) {
+            if (boundsOverlap(bounds, sel.bounds)) {
+                showMessage('Overlaps another selection');
+                return false;
+            }
+        }
+    }
+
+    const position = getFacePosition(vol, axis, side);
+    state.extrudeSelections.push({ volumeId, axis, side, bounds, position });
+    state.extrudePhase = 'selecting';
+    return true;
+}
+
+// Find the room that contains a volume (returns null if it IS a room)
+function findContainingRoom(vol) {
+    for (const other of state.volumes) {
+        if (other.id === vol.id) continue;
+        if (vol.x >= other.x && vol.x + vol.w <= other.x + other.w &&
+            vol.y >= other.y && vol.y + vol.h <= other.y + other.h &&
+            vol.z >= other.z && vol.z + vol.d <= other.z + other.d) {
+            return other;
+        }
+    }
+    return null;
+}
+
+// Check if a protrusion can grow further within its parent's interior
+function canExtendProtrusion(vol, axis, growSide, parentVol) {
+    const step = state.pushStep;
+    if (axis === 'x') {
+        if (growSide === 'max') return vol.x + vol.w + step <= parentVol.x + parentVol.w;
+        else return vol.x - step >= parentVol.x;
+    } else if (axis === 'y') {
+        if (growSide === 'max') return vol.y + vol.h + step <= parentVol.y + parentVol.h;
+        else return vol.y - step >= parentVol.y;
+    } else {
+        if (growSide === 'max') return vol.z + vol.d + step <= parentVol.z + parentVol.d;
+        else return vol.z - step >= parentVol.z;
+    }
+}
+
+export function executeExtrude(showMessage, rebuildAllCallback) {
+    if (state.extrudePhase !== 'selecting' || state.extrudeSelections.length === 0) return;
+
+    const { axis, side } = state.extrudeDirection;
+    const step = state.pushStep;
+
+    // Determine grow direction based on face normal:
+    // - Room face (invertNormals=false): normal points into room, growSide = opposite of side
+    // - Protrusion face (invertNormals=true): normal points outward, growSide = same as side
+    const firstVol = state.volumes.find(v => v.id === state.extrudeSelections[0].volumeId);
+    const isFromProtrusion = firstVol && firstVol.invertNormals;
+    const growSide = isFromProtrusion ? side : (side === 'min' ? 'max' : 'min');
+
+    const selectionData = [];
+
+    for (const sel of state.extrudeSelections) {
+        const clickedVol = state.volumes.find(v => v.id === sel.volumeId);
+        if (!clickedVol) continue;
+
+        // Resolve the containing room for bounds checking
+        const room = clickedVol.invertNormals ? findContainingRoom(clickedVol) : clickedVol;
+        if (!room) continue;
+
+        // Place new volume starting at the face position, extending in growSide direction
+        const facePos = sel.position;
+        const { u0, u1, v0, v1 } = sel.bounds;
+        let nx, ny, nz, nw, nh, nd;
+
+        if (axis === 'x') {
+            nx = growSide === 'max' ? facePos : facePos - step;
+            ny = v0; nz = u0;
+            nw = step; nh = v1 - v0; nd = u1 - u0;
+        } else if (axis === 'y') {
+            ny = growSide === 'max' ? facePos : facePos - step;
+            nx = u0; nz = v0;
+            nw = u1 - u0; nh = step; nd = v1 - v0;
+        } else { // z
+            nz = growSide === 'max' ? facePos : facePos - step;
+            nx = u0; ny = v0;
+            nw = u1 - u0; nh = v1 - v0; nd = step;
+        }
+
+        const newVol = new Volume(0, nx, ny, nz, nw, nh, nd);
+        newVol.invertNormals = true; // protrusions have outward-facing normals
+        selectionData.push({ newVol, room });
+    }
+
+    if (selectionData.length === 0) return;
+
+    // Commit
+    saveUndoState();
+    state.extrudedVolumes = [];
+    const roomIds = [...new Set(selectionData.map(d => d.room.id))];
+    state.extrudeParentIds = roomIds;
+    state.extrudeGrowSide = growSide;
+    state.extrudeVolumeParentMap = {};
+
+    for (const { newVol, room } of selectionData) {
+        newVol.id = state.nextVolumeId++;
+        state.volumes.push(newVol);
+        state.extrudedVolumes.push(newVol.id);
+        state.extrudeVolumeParentMap[newVol.id] = room.id;
+    }
+
+    state.extrudeSelections = [];
+    state.extrudePhase = 'extruded';
+    state.selectedFace = null;
+    rebuildAllCallback();
+    showMessage(`Extruded ${selectionData.length} region${selectionData.length > 1 ? 's' : ''}`);
+}
+
+export function reExtrudeVolumes(pushOrPull, showMessage, rebuildAllCallback) {
+    if (state.extrudePhase !== 'extruded' || state.extrudedVolumes.length === 0) return;
+
+    const { axis } = state.extrudeDirection;
+    const growSide = state.extrudeGrowSide;
+
+    if (pushOrPull === 'push') {
+        // Check each protrusion can grow within its parent's interior
+        for (const volId of state.extrudedVolumes) {
+            const vol = state.volumes.find(v => v.id === volId);
+            const parentVol = state.volumes.find(v => v.id === state.extrudeVolumeParentMap[volId]);
+            if (!vol || !parentVol) continue;
+            if (!canExtendProtrusion(vol, axis, growSide, parentVol)) {
+                showMessage('Blocked — hit opposite wall');
+                return;
+            }
+        }
+        saveUndoState();
+        for (const volId of state.extrudedVolumes) {
+            const vol = state.volumes.find(v => v.id === volId);
+            if (vol) applyPush(vol, axis, growSide);
+        }
+        rebuildAllCallback();
+    } else { // pull — shrink protrusions back toward wall
+        saveUndoState();
+        let anyPulled = false;
+        for (const volId of state.extrudedVolumes) {
+            const vol = state.volumes.find(v => v.id === volId);
+            if (vol && applyPull(vol, axis, growSide)) {
+                anyPulled = true;
+            }
+        }
+        if (!anyPulled) {
+            state.undoStack.pop();
+            showMessage('Minimum size reached');
+            return;
+        }
+        rebuildAllCallback();
+    }
+}
+
+export function extrudeUntilBlocked(showMessage, rebuildAllCallback) {
+    if (state.extrudePhase !== 'extruded' || state.extrudedVolumes.length === 0) return;
+
+    const { axis } = state.extrudeDirection;
+    const growSide = state.extrudeGrowSide;
+    let steps = 0;
+
+    while (true) {
+        let allClear = true;
+        for (const volId of state.extrudedVolumes) {
+            const vol = state.volumes.find(v => v.id === volId);
+            const parentVol = state.volumes.find(v => v.id === state.extrudeVolumeParentMap[volId]);
+            if (!vol || !parentVol || !canExtendProtrusion(vol, axis, growSide, parentVol)) {
+                allClear = false;
+                break;
+            }
+        }
+        if (!allClear) break;
+
+        if (steps === 0) saveUndoState();
+
+        for (const volId of state.extrudedVolumes) {
+            const vol = state.volumes.find(v => v.id === volId);
+            if (vol) applyPush(vol, axis, growSide);
+        }
+        steps++;
+
+        if (steps > 200) break;
+    }
+
+    if (steps > 0) {
+        rebuildAllCallback();
+        showMessage(`Extended ${steps * state.pushStep} WT`);
+    } else {
+        showMessage('Already blocked');
+    }
+}
+
+export function clearExtrudeState() {
+    state.extrudeSelections = [];
+    state.extrudeDirection = null;
+    state.extrudedVolumes = [];
+    state.extrudeParentIds = [];
+    state.extrudeGrowSide = null;
+    state.extrudeVolumeParentMap = {};
+    state.extrudePhase = 'idle';
+}
+

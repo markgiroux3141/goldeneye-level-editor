@@ -42,30 +42,30 @@ export function initMaterials() {
 }
 
 export function getWallMaterial() {
-    return new THREE.MeshLambertMaterial({ map: wallTex.clone(), side: THREE.DoubleSide });
+    return new THREE.MeshLambertMaterial({ map: wallTex.clone(), side: THREE.FrontSide });
 }
 
 export function getFloorMaterial() {
-    return new THREE.MeshLambertMaterial({ map: floorTex.clone(), side: THREE.DoubleSide });
+    return new THREE.MeshLambertMaterial({ map: floorTex.clone(), side: THREE.FrontSide });
 }
 
 export function getCeilingMaterial() {
-    return new THREE.MeshLambertMaterial({ map: ceilingTex.clone(), side: THREE.DoubleSide });
+    return new THREE.MeshLambertMaterial({ map: ceilingTex.clone(), side: THREE.FrontSide });
 }
 
 export function getHighlightMaterial() {
     return new THREE.MeshLambertMaterial({
         map: highlightTex.clone(),
-        side: THREE.DoubleSide,
+        side: THREE.FrontSide,
         emissive: 0x224422,
         emissiveIntensity: 0.5,
     });
 }
 
 export function getDoorFrameMaterial() {
-    return new THREE.MeshLambertMaterial({ color: 0x8B7355, side: THREE.DoubleSide });
+    return new THREE.MeshLambertMaterial({ color: 0x8B7355, side: THREE.FrontSide });
 }
 
 export function getDoorExitMaterial() {
-    return new THREE.MeshLambertMaterial({ color: 0x556655, side: THREE.DoubleSide });
+    return new THREE.MeshLambertMaterial({ color: 0x556655, side: THREE.FrontSide });
 }
