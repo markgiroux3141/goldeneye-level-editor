@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoldenEye Level Editor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
+        canvas { display: block; }
+
+        #hud {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        #crosshair {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 20px; height: 20px;
+        }
+        #crosshair::before, #crosshair::after {
+            content: '';
+            position: absolute;
+            background: #0f0;
+        }
+        #crosshair::before {
+            top: 0; left: 50%;
+            width: 2px; height: 100%;
+            transform: translateX(-50%);
+        }
+        #crosshair::after {
+            top: 50%; left: 0;
+            width: 100%; height: 2px;
+            transform: translateY(-50%);
+        }
+
+        #status {
+            position: absolute;
+            bottom: 20px; left: 20px;
+            color: #0f0;
+            font-size: 14px;
+            line-height: 1.6;
+            text-shadow: 1px 1px 2px #000;
+        }
+
+        #tool-info {
+            position: absolute;
+            top: 20px; right: 20px;
+            color: #0f0;
+            font-size: 14px;
+            text-align: right;
+            line-height: 1.6;
+            text-shadow: 1px 1px 2px #000;
+        }
+
+        #help {
+            position: absolute;
+            top: 20px; left: 20px;
+            color: #0a0;
+            font-size: 12px;
+            line-height: 1.8;
+            text-shadow: 1px 1px 2px #000;
+            opacity: 0.7;
+        }
+
+        #settings {
+            position: absolute;
+            bottom: 20px; right: 20px;
+            color: #0f0;
+            font-size: 12px;
+            text-shadow: 1px 1px 2px #000;
+            pointer-events: auto;
+        }
+        #settings label {
+            display: block;
+            margin: 4px 0;
+        }
+        #settings input {
+            width: 50px;
+            background: #111;
+            color: #0f0;
+            border: 1px solid #0a0;
+            padding: 2px 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        #lock-prompt {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #0f0;
+            font-size: 24px;
+            text-align: center;
+            text-shadow: 2px 2px 4px #000;
+        }
+        #lock-prompt span {
+            display: block;
+            font-size: 14px;
+            margin-top: 10px;
+            color: #0a0;
+        }
+
+        #message {
+            position: absolute;
+            top: 40%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff0;
+            font-size: 16px;
+            text-shadow: 1px 1px 2px #000;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+    </style>
+</head>
+<body>
+    <div id="hud">
+        <div id="crosshair"></div>
+        <div id="status"></div>
+        <div id="tool-info"></div>
+        <div id="help">
+            WASD - Move | Mouse - Look<br>
+            Click - Select Face<br>
+            +/- Push/Pull Face<br>
+            T - Toggle Tool (Push/Pull | Door)<br>
+            X - Delete Volume<br>
+            Ctrl+Z - Undo<br>
+            Ctrl+S - Save | Ctrl+O - Load
+        </div>
+        <div id="lock-prompt">
+            Click to Start
+            <span>GoldenEye Level Editor</span>
+        </div>
+        <div id="settings">
+            <label>Door W: <input id="door-width" type="number" value="6" min="1" max="40" step="1"></label>
+            <label>Door H: <input id="door-height" type="number" value="8" min="1" max="40" step="1"></label>
+            <label>Push Step: <input id="push-step" type="number" value="4" min="1" max="20" step="1"></label>
+        </div>
+        <div id="message"></div>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>
