@@ -20,10 +20,11 @@ export function createConnection(id, volAId, axis, sideOnA, bounds, volBId) {
 export function computeDoorPlacement(vol, axis, side, hitPoint, doorWidth, doorHeight) {
     if (axis === 'y') return null; // no doors on floor/ceiling
 
-    let faceW, faceH, localU;
+    let faceW, faceH, localU, localV;
 
     // hitPoint is in Three.js world space — convert to WT units
     const hx = hitPoint.x / WORLD_SCALE;
+    const hy = hitPoint.y / WORLD_SCALE;
     const hz = hitPoint.z / WORLD_SCALE;
 
     if (axis === 'x') {
@@ -33,20 +34,24 @@ export function computeDoorPlacement(vol, axis, side, hitPoint, doorWidth, doorH
         faceW = vol.w; faceH = vol.h;
         localU = hx - vol.x;
     }
+    localV = hy - vol.y;
 
     if (faceW < doorWidth || faceH < doorHeight) return null;
 
     let doorU = Math.round(localU - doorWidth / 2);
     doorU = Math.max(0, Math.min(faceW - doorWidth, doorU));
 
+    let doorV = Math.round(localV - doorHeight / 2);
+    doorV = Math.max(0, Math.min(faceH - doorHeight, doorV));
+
     // Convert to world-space bounds
     let u0, u1, v0, v1;
     if (axis === 'x') {
         u0 = vol.z + doorU; u1 = u0 + doorWidth;
-        v0 = vol.y; v1 = v0 + doorHeight;
+        v0 = vol.y + doorV; v1 = v0 + doorHeight;
     } else {
         u0 = vol.x + doorU; u1 = u0 + doorWidth;
-        v0 = vol.y; v1 = v0 + doorHeight;
+        v0 = vol.y + doorV; v1 = v0 + doorHeight;
     }
 
     return { u0, u1, v0, v1 };
