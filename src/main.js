@@ -18,7 +18,9 @@ import {
     saveLevel, loadLevel,
     addExtrudeSelection, executeExtrude, reExtrudeVolumes,
     extrudeUntilBlocked, clearExtrudeState, computeExtrudePlacement,
+    snapToWTGrid, placeStaircase, clearStairState,
 } from './actions.js';
+import { buildStaircaseGeometry, buildStaircasePreviewLines } from './staircaseGeometry.js';
 
 // ============================================================
 // INIT
@@ -41,6 +43,15 @@ const extrudePreviewGroup = new THREE.Group();
 scene.add(extrudePreviewGroup);
 const extrudeSelectionMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
 const extrudeHoverMat = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
+
+// Staircase mesh storage: Map<staircaseId, THREE.Mesh>
+const staircaseMeshes = new Map();
+
+// Stair preview group
+const stairPreviewGroup = new THREE.Group();
+scene.add(stairPreviewGroup);
+const stairPreviewMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
+const stairMarkerMat = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
 
 // ============================================================
 // MESH MANAGEMENT
@@ -95,15 +106,58 @@ function removeVolumeMesh(volId) {
 }
 
 // ============================================================
+// STAIRCASE MESH MANAGEMENT
+// ============================================================
+function rebuildStaircase(stair) {
+    const old = staircaseMeshes.get(stair.id);
+    if (old) {
+        scene.remove(old);
+        old.geometry.dispose();
+    }
+
+    const geometry = buildStaircaseGeometry(stair);
+    const material = getWallMaterial();
+    material.vertexColors = true;
+    material.map.repeat.set(1, 1);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData = { staircaseId: stair.id };
+
+    const edges = new THREE.EdgesGeometry(geometry);
+    const wireframe = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x333333 }));
+    mesh.add(wireframe);
+
+    staircaseMeshes.set(stair.id, mesh);
+    scene.add(mesh);
+}
+
+function rebuildAllStaircases() {
+    for (const [id, mesh] of staircaseMeshes) {
+        scene.remove(mesh);
+        mesh.geometry.dispose();
+    }
+    staircaseMeshes.clear();
+    for (const stair of state.staircases) {
+        rebuildStaircase(stair);
+    }
+}
+
+// Rebuild everything (volumes + staircases) — used for undo/load
+function rebuildAll() {
+    rebuildAllVolumes();
+    rebuildAllStaircases();
+}
+
+// ============================================================
 // TOOL CYCLING
 // ============================================================
-const TOOL_CYCLE = ['push_pull', 'door', 'extrude'];
-const TOOL_NAMES = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude' };
+const TOOL_CYCLE = ['push_pull', 'door', 'extrude', 'stair'];
+const TOOL_NAMES = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', stair: 'Stair' };
 
 function cycleToolForward() {
     const idx = TOOL_CYCLE.indexOf(state.tool);
     state.tool = TOOL_CYCLE[(idx + 1) % TOOL_CYCLE.length];
     if (state.tool !== 'extrude') clearExtrudeState();
+    if (state.tool !== 'stair') clearStairState();
     showMessage('Tool: ' + TOOL_NAMES[state.tool]);
 }
 
@@ -114,6 +168,22 @@ document.addEventListener('mousedown', (e) => {
     if (!isPointerLocked() || e.button !== 0) return;
 
     const hit = pickFace(camera, volumeMeshes);
+
+    if (state.tool === 'stair') {
+        if (!hit) return; // need a surface to click on
+        const snapped = snapToWTGrid(hit.point);
+        if (state.stairPhase === 'idle') {
+            // First click — set top point
+            state.stairTopPoint = snapped;
+            state.stairPhase = 'top_set';
+            showMessage(`Top set at (${snapped.x}, ${snapped.y}, ${snapped.z})`);
+        } else if (state.stairPhase === 'top_set') {
+            // Second click — place staircase
+            placeStaircase(state.stairTopPoint, snapped, showMessage, rebuildStaircase);
+            clearStairState();
+        }
+        return;
+    }
 
     if (!hit) {
         if (state.tool === 'extrude') {
@@ -184,6 +254,14 @@ onKeyDown((e) => {
         return;
     }
 
+    // Stair tool: R to toggle side
+    if (e.code === 'KeyR' && state.tool === 'stair' && isPointerLocked()) {
+        e.preventDefault();
+        state.stairSide = state.stairSide === 'right' ? 'left' : 'right';
+        showMessage('Stair side: ' + state.stairSide.toUpperCase());
+        return;
+    }
+
     if (e.code === 'KeyT' && isPointerLocked()) {
         e.preventDefault();
         cycleToolForward();
@@ -200,7 +278,8 @@ onKeyDown((e) => {
     if (e.ctrlKey && e.code === 'KeyZ') {
         e.preventDefault();
         clearExtrudeState();
-        undoAction(showMessage, rebuildAllVolumes);
+        clearStairState();
+        undoAction(showMessage, rebuildAll);
         return;
     }
 
@@ -212,13 +291,17 @@ onKeyDown((e) => {
 
     if (e.ctrlKey && e.code === 'KeyO') {
         e.preventDefault();
-        loadLevel(showMessage, rebuildAllVolumes);
+        loadLevel(showMessage, rebuildAll);
         return;
     }
 
     if (e.code === 'Escape') {
         if (state.tool === 'extrude') {
             clearExtrudeState();
+        }
+        if (state.tool === 'stair') {
+            clearStairState();
+            showMessage('Stair placement cancelled');
         }
         state.selectedFace = null;
         rebuildAllVolumes();
@@ -239,7 +322,7 @@ try {
         const data = JSON.parse(saved);
         if (data.volumes && data.volumes.length > 0) {
             deserializeLevel(saved);
-            rebuildAllVolumes();
+            rebuildAll();
         }
     }
 } catch (e) { /* ignore */ }
@@ -372,6 +455,82 @@ function updateExtrudePreview() {
 }
 
 // ============================================================
+// STAIR PREVIEW
+// ============================================================
+function updateStairPreview() {
+    // Clear previous preview
+    while (stairPreviewGroup.children.length > 0) {
+        const child = stairPreviewGroup.children[0];
+        stairPreviewGroup.remove(child);
+        if (child.geometry) child.geometry.dispose();
+    }
+
+    if (state.tool !== 'stair' || !isPointerLocked()) return;
+
+    const hit = pickFace(camera, volumeMeshes);
+    if (!hit) return;
+
+    const snapped = snapToWTGrid(hit.point);
+    const W = WORLD_SCALE;
+
+    if (state.stairPhase === 'idle') {
+        // Yellow marker at snapped position
+        const s = 0.5; // half-size of marker cube in WT
+        const cx = snapped.x, cy = snapped.y, cz = snapped.z;
+        const pts = [
+            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
+            new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz-s)*W),
+            new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz-s)*W),
+            new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz-s)*W),
+            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
+            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
+            new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz+s)*W),
+            new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz+s)*W),
+            new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz+s)*W),
+            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
+        ];
+        const geo = new THREE.BufferGeometry().setFromPoints(pts);
+        stairPreviewGroup.add(new THREE.Line(geo, stairMarkerMat));
+    } else if (state.stairPhase === 'top_set') {
+        // Green wireframe staircase preview from stored top to current hover
+        const topPt = state.stairTopPoint;
+        const bottomPt = snapped;
+
+        // Validate: need height difference and horizontal distance
+        if (topPt.y > bottomPt.y) {
+            const dx = Math.abs(topPt.x - bottomPt.x);
+            const dz = Math.abs(topPt.z - bottomPt.z);
+            if (dx > 0 || dz > 0) {
+                const previewSteps = Math.max(1, Math.round((topPt.y - bottomPt.y) / state.stairStepHeight));
+                const pts = buildStaircasePreviewLines(
+                    topPt, bottomPt, state.stairWidth, previewSteps, state.stairSide
+                );
+                const geo = new THREE.BufferGeometry().setFromPoints(pts);
+                stairPreviewGroup.add(new THREE.LineSegments(geo, stairPreviewMat));
+            }
+        }
+
+        // Also draw a yellow marker at the stored top point
+        const s = 0.5;
+        const cx = topPt.x, cy = topPt.y, cz = topPt.z;
+        const markerPts = [
+            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
+            new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz-s)*W),
+            new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz-s)*W),
+            new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz-s)*W),
+            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
+            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
+            new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz+s)*W),
+            new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz+s)*W),
+            new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz+s)*W),
+            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
+        ];
+        const markerGeo = new THREE.BufferGeometry().setFromPoints(markerPts);
+        stairPreviewGroup.add(new THREE.Line(markerGeo, stairMarkerMat));
+    }
+}
+
+// ============================================================
 // RENDER LOOP
 // ============================================================
 const clock = new THREE.Clock();
@@ -382,6 +541,7 @@ function animate() {
     updateCamera(camera, dt);
     updateDoorPreview();
     updateExtrudePreview();
+    updateStairPreview();
     updateHUD(camera);
     renderer.render(scene, camera);
 }

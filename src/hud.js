@@ -11,6 +11,8 @@ const doorHeightInput = document.getElementById('door-height');
 const pushStepInput = document.getElementById('push-step');
 const extrudeWidthInput = document.getElementById('extrude-width');
 const extrudeHeightInput = document.getElementById('extrude-height');
+const stairWidthInput = document.getElementById('stair-width');
+const stairStepHeightInput = document.getElementById('stair-step-height');
 let messageTimeout = null;
 
 // Sync HUD inputs to state
@@ -30,6 +32,12 @@ export function initHUD() {
     extrudeHeightInput.addEventListener('change', () => {
         state.extrudeHeight = parseFloat(extrudeHeightInput.value) || 2;
     });
+    stairWidthInput.addEventListener('change', () => {
+        state.stairWidth = parseInt(stairWidthInput.value) || 4;
+    });
+    stairStepHeightInput.addEventListener('change', () => {
+        state.stairStepHeight = Math.max(1, parseInt(stairStepHeightInput.value) || 1);
+    });
 
     // Listen for messages via EventBus
     on('message', ({ text }) => showMessage(text));
@@ -42,12 +50,21 @@ export function showMessage(msg) {
     messageTimeout = setTimeout(() => { messageEl.style.opacity = '0'; }, 2000);
 }
 
-const TOOL_LABELS = { push_pull: 'PUSH/PULL', door: 'DOOR', extrude: 'EXTRUDE' };
+const TOOL_LABELS = { push_pull: 'PUSH/PULL', door: 'DOOR', extrude: 'EXTRUDE', stair: 'STAIR' };
 
 export function updateHUD(camera) {
     const lines = [];
 
-    if (state.tool === 'extrude') {
+    if (state.tool === 'stair') {
+        if (state.stairPhase === 'top_set') {
+            const tp = state.stairTopPoint;
+            lines.push(`Top: (${tp.x}, ${tp.y}, ${tp.z})`);
+            lines.push(`Click bottom of staircase`);
+        } else {
+            lines.push(`Click top of staircase`);
+        }
+        lines.push(`Side: ${state.stairSide.toUpperCase()} (R to toggle)`);
+    } else if (state.tool === 'extrude') {
         // Extrude tool status
         if (state.extrudePhase === 'selecting') {
             lines.push(`Selections: ${state.extrudeSelections.length}`);
@@ -70,7 +87,7 @@ export function updateHUD(camera) {
         }
     }
 
-    lines.push(`Volumes: ${state.volumes.length} | Connections: ${state.connections.length}`);
+    lines.push(`Volumes: ${state.volumes.length} | Connections: ${state.connections.length} | Stairs: ${state.staircases.length}`);
     statusEl.innerHTML = lines.join('<br>');
 
     const toolName = TOOL_LABELS[state.tool] || state.tool;

@@ -1,6 +1,7 @@
 // Editor actions: push/pull, door cutting, save/load
 
 import { Volume, WALL_THICKNESS, WORLD_SCALE } from './core/Volume.js';
+import { Staircase } from './core/Staircase.js';
 import { state, saveUndoState, undo, serializeLevel, deserializeLevel } from './state.js';
 import { canExtendVolume, canPlaceVolume, applyPush, applyPull } from './collision.js';
 import { computeDoorPlacement, connectionExistsAt, createConnection } from './core/Connection.js';
@@ -578,5 +579,54 @@ export function clearExtrudeState() {
     state.extrudeGrowSide = null;
     state.extrudeVolumeParentMap = {};
     state.extrudePhase = 'idle';
+}
+
+// ============================================================
+// STAIRCASE TOOL
+// ============================================================
+
+/** Snap a hit point (world coords) to WT grid coordinates. */
+export function snapToWTGrid(hitPoint) {
+    return {
+        x: Math.round(hitPoint.x / WORLD_SCALE),
+        y: Math.round(hitPoint.y / WORLD_SCALE),
+        z: Math.round(hitPoint.z / WORLD_SCALE),
+    };
+}
+
+/** Place a staircase between two snapped WT-grid points. */
+export function placeStaircase(topPoint, bottomPoint, showMessage, rebuildStaircaseCallback) {
+    // Validate: top must be higher than bottom
+    if (topPoint.y <= bottomPoint.y) {
+        showMessage('Top must be higher than bottom');
+        return false;
+    }
+
+    // Validate: must have some horizontal distance
+    const dx = Math.abs(topPoint.x - bottomPoint.x);
+    const dz = Math.abs(topPoint.z - bottomPoint.z);
+    if (dx === 0 && dz === 0) {
+        showMessage('Staircase needs horizontal distance');
+        return false;
+    }
+
+    saveUndoState();
+
+    const stair = new Staircase(
+        state.nextStaircaseId++,
+        topPoint.x, topPoint.y, topPoint.z,
+        bottomPoint.x, bottomPoint.y, bottomPoint.z,
+        state.stairWidth, state.stairStepHeight, state.stairSide,
+    );
+
+    state.staircases.push(stair);
+    rebuildStaircaseCallback(stair);
+    showMessage(`Staircase placed (${stair.steps} steps)`);
+    return true;
+}
+
+export function clearStairState() {
+    state.stairPhase = 'idle';
+    state.stairTopPoint = null;
 }
 
