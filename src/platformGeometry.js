@@ -115,18 +115,19 @@ class PlatformGeometryBuilder {
 export function buildPlatformGeometry(platform, options = {}) {
     const builder = new PlatformGeometryBuilder();
 
-    const { x, y, z, sizeX, sizeZ, thickness } = platform;
+    const { x, y, z, sizeX, sizeZ, thickness, grounded } = platform;
+    const effectiveThickness = grounded ? y : thickness;
     const xMin = x;
     const xMax = x + sizeX;
     const zMin = z;
     const zMax = z + sizeZ;
     const yTop = y;
-    const yBot = y - thickness;
+    const yBot = y - effectiveThickness;
 
     const textured = options.viewMode === 'textured';
     const treadZone = textured ? 0 : 0;
     const sideZone = textured ? 3 : 0;
-    const h = thickness;
+    const h = effectiveThickness;
     const w = sizeX;
     const d = sizeZ;
 
@@ -247,7 +248,8 @@ export function buildStairRunGeometry(stairRun, fromPlatform, toPlatform, option
     const totalRun = bottomRun - topRun;
     const stepRise = rise / steps;
     const stepRun = totalRun / steps;
-    const floorY = bottomPt.y;
+    const stairBaseY = bottomPt.y;                          // where steps start (unchanged)
+    const floorY = stairRun.grounded ? 0 : bottomPt.y;     // where side walls reach down to
 
     const xorFlip = (runAxis === 'x') !== (stepRun < 0);
 
@@ -261,8 +263,8 @@ export function buildStairRunGeometry(stairRun, fromPlatform, toPlatform, option
     for (let i = 0; i < steps; i++) {
         const rFront = topRun + (steps - i) * stepRun;
         const rBack = topRun + (steps - i - 1) * stepRun;
-        const stepTopY = floorY + (i + 1) * stepRise;
-        const stepBotY = floorY + i * stepRise;
+        const stepTopY = stairBaseY + (i + 1) * stepRise;
+        const stepBotY = stairBaseY + i * stepRise;
         const absStepRun = Math.abs(stepRun);
         const sideH = stepTopY - floorY;
 
@@ -333,14 +335,14 @@ export function buildStairRunGeometry(stairRun, fromPlatform, toPlatform, option
     );
 
     // Front face (at bottom, if there's a gap below the first step)
-    if (floorY < bottomPt.y) {
+    if (floorY < stairBaseY) {
         const frontRun = topRun + steps * stepRun;
-        const frontH = bottomPt.y - floorY;
+        const frontH = stairBaseY - floorY;
         builder.addQuad(
             toWorld(runAxis, frontRun, floorY, perpMax),
             toWorld(runAxis, frontRun, floorY, perpMin),
-            toWorld(runAxis, frontRun, bottomPt.y, perpMin),
-            toWorld(runAxis, frontRun, bottomPt.y, perpMax),
+            toWorld(runAxis, frontRun, stairBaseY, perpMin),
+            toWorld(runAxis, frontRun, stairBaseY, perpMax),
             !xorFlip, sideZone,
             ...(textured ? [[0, 0], [stepWidth, 0], [stepWidth, frontH], [0, frontH]] : []),
         );

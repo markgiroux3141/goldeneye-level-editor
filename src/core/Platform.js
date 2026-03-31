@@ -10,6 +10,7 @@ export class Platform {
         this.sizeX = sizeX;    // X dimension in WT units (>= 1)
         this.sizeZ = sizeZ;    // Z dimension in WT units (>= 1)
         this.thickness = thickness; // slab depth in WT units (default 1)
+        this.grounded = false;  // when true, extends down to Y=0
     }
 
     // Computed bounds
@@ -71,10 +72,13 @@ export class Platform {
             x: this.x, y: this.y, z: this.z,
             sizeX: this.sizeX, sizeZ: this.sizeZ,
             thickness: this.thickness,
+            grounded: this.grounded,
         };
     }
 
     static fromJSON(j) {
-        return new Platform(j.id, j.x, j.y, j.z, j.sizeX, j.sizeZ, j.thickness ?? 1);
+        const p = new Platform(j.id, j.x, j.y, j.z, j.sizeX, j.sizeZ, j.thickness ?? 1);
+        p.grounded = j.grounded ?? false;
+        return p;
     }
 }

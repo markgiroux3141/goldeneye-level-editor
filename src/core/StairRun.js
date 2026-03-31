@@ -13,6 +13,7 @@ export class StairRun {
         this.width = width;                     // perpendicular width in WT units
         this.stepHeight = stepHeight;           // height per step in WT units
         this.riseOverRun = riseOverRun;         // rise/run ratio (1 = 45 deg)
+        this.grounded = false;                  // when true, side walls extend to Y=0
     }
 
     // Resolve the world-space attachment point for one end of the stair run.
@@ -74,15 +75,18 @@ export class StairRun {
             width: this.width,
             stepHeight: this.stepHeight,
             riseOverRun: this.riseOverRun,
+            grounded: this.grounded,
         };
     }
 
     static fromJSON(j) {
-        return new StairRun(
+        const r = new StairRun(
             j.id, j.fromPlatformId, j.toPlatformId,
             j.anchorFrom, j.anchorTo,
             j.width, j.stepHeight, j.riseOverRun ?? 1,
         );
+        r.grounded = j.grounded ?? false;
+        return r;
     }
 }
 

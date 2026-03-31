@@ -645,6 +645,29 @@ onKeyDown((e) => {
             return;
         }
 
+        // F = toggle grounded (extend to floor) on platform + connected stairs
+        if (e.code === 'KeyF' && selectedPlat && state.platformPhase === 'selected') {
+            e.preventDefault();
+            saveUndoState();
+            const newGrounded = !selectedPlat.grounded;
+            selectedPlat.grounded = newGrounded;
+            rebuildPlatform(selectedPlat);
+            // Also toggle all connected stair runs
+            const connectedRuns = state.stairRuns.filter(
+                r => r.fromPlatformId === selectedPlat.id || r.toPlatformId === selectedPlat.id
+            );
+            for (const run of connectedRuns) {
+                run.grounded = newGrounded;
+                rebuildStairRun(run);
+            }
+            const count = connectedRuns.length;
+            const label = newGrounded ? 'grounded' : 'floating';
+            showMessage(count > 0
+                ? `Platform + ${count} stair run${count > 1 ? 's' : ''} ${label}`
+                : `Platform ${label}`);
+            return;
+        }
+
         // X/Delete = delete selected platform
         if ((e.code === 'KeyX' || e.key === 'Delete') && selectedPlat && state.platformPhase === 'selected') {
             e.preventDefault();

@@ -78,9 +78,10 @@ export function updateHUD(camera) {
         } else if (state.platformPhase === 'selected') {
             const plat = state.platforms.find(p => p.id === state.selectedPlatformId);
             if (plat) {
-                lines.push(`Platform ${plat.id}: ${plat.sizeX}x${plat.sizeZ} at Y=${plat.y}`);
+                const grLabel = plat.grounded ? ' [grounded]' : '';
+                lines.push(`Platform ${plat.id}: ${plat.sizeX}x${plat.sizeZ} at Y=${plat.y}${grLabel}`);
                 lines.push(`Click arrows to move, edge handles to scale`);
-                lines.push(`X=delete  C=connect stairs`);
+                lines.push(`X=delete  C=connect stairs  F=ground`);
             }
         } else if (state.platformPhase === 'connecting_dst') {
             lines.push(`Click destination platform or floor`);
