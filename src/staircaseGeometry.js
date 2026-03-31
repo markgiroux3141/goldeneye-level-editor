@@ -176,13 +176,14 @@ function buildStairRun(builder, topPt, bottomPt, steps, runAxis, runSign, width,
         );
 
         // Left side (perpMin, faces -perp) — brown wall (UVs = WT dimensions)
+        const uOff = i * absStepRun;
         builder.addQuad(
             toWorld(runAxis, rFront, floorY, perpMin),
             toWorld(runAxis, rBack, floorY, perpMin),
             toWorld(runAxis, rBack, stepTopY, perpMin),
             toWorld(runAxis, rFront, stepTopY, perpMin),
             !xorFlip, sideZone,
-            ...(textured ? [[0, 0], [absStepRun, 0], [absStepRun, sideH], [0, sideH]] : []),
+            ...(textured ? [[uOff, 0], [uOff + absStepRun, 0], [uOff + absStepRun, sideH], [uOff, sideH]] : []),
         );
 
         // Right side (perpMax, faces +perp) — brown wall (UVs = WT dimensions)
@@ -192,7 +193,7 @@ function buildStairRun(builder, topPt, bottomPt, steps, runAxis, runSign, width,
             toWorld(runAxis, rFront, stepTopY, perpMax),
             toWorld(runAxis, rBack, stepTopY, perpMax),
             !xorFlip, sideZone,
-            ...(textured ? [[0, 0], [absStepRun, 0], [absStepRun, sideH], [0, sideH]] : []),
+            ...(textured ? [[uOff, 0], [uOff + absStepRun, 0], [uOff + absStepRun, sideH], [uOff, sideH]] : []),
         );
     }
 

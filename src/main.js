@@ -6,7 +6,7 @@ import { initInput, initKeyActions, onKeyDown, isPointerLocked, consumeMouseDelt
 import { updateCamera } from './camera.js';
 import { Volume, WORLD_SCALE } from './core/Volume.js';
 import { state, deserializeLevel, saveUndoState } from './state.js';
-import { initMaterials, getWallMaterial, getTexturedMaterialArray, getTexturedMaterialArrayForScheme } from './materials.js';
+import { initMaterials, getWallMaterial, getTexturedMaterialArray, getTexturedMaterialArrayForScheme, getRailingMaterial, getRailingGridMaterial } from './materials.js';
 import { TEXTURE_SCHEMES, getSchemeByKey, loadTextureSchemes } from './textureSchemes.js';
 import { buildVolumeGeometry } from './geometry.js';
 import { getConnectionsForFace, computeDoorPlacement } from './core/Connection.js';
@@ -23,7 +23,7 @@ import {
 } from './actions.js';
 import { buildStaircaseGeometry, buildStaircasePreviewLines } from './staircaseGeometry.js';
 import { Platform } from './core/Platform.js';
-import { buildPlatformGeometry, buildPlatformPreviewLines, buildEdgeHighlightLines, buildEdgeSlotLines, buildStairRunGeometry, buildStairRunPreviewLines } from './platformGeometry.js';
+import { buildPlatformGeometry, buildPlatformPreviewLines, buildEdgeHighlightLines, buildEdgeSlotLines, buildStairRunGeometry, buildStairRunPreviewLines, buildPlatformRailingGeometry, buildStairRunRailingGeometry } from './platformGeometry.js';
 import { StairRun } from './core/StairRun.js';
 import { PlatformGizmo } from './gizmo.js';
 
@@ -209,6 +209,20 @@ function rebuildPlatform(plat) {
     const wireframe = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x333333 }));
     mesh.add(wireframe);
 
+    // Add railings if enabled
+    if (plat.railings) {
+        const connectedRuns = state.stairRuns.filter(
+            r => r.fromPlatformId === plat.id || r.toPlatformId === plat.id
+        );
+        const railGeo = buildPlatformRailingGeometry(plat, connectedRuns, state.volumes);
+        if (railGeo.getAttribute('position') && railGeo.getAttribute('position').count > 0) {
+            const railMat = state.viewMode === 'textured' ? getRailingMaterial() : getRailingGridMaterial();
+            const railMesh = new THREE.Mesh(railGeo, railMat);
+            railMesh.renderOrder = 1;
+            mesh.add(railMesh);
+        }
+    }
+
     platformMeshes.set(plat.id, mesh);
     scene.add(mesh);
 }
@@ -268,6 +282,17 @@ function rebuildStairRun(run) {
     const edges = new THREE.EdgesGeometry(geometry);
     const wireframe = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x333333 }));
     mesh.add(wireframe);
+
+    // Add railings if enabled
+    if (run.railings) {
+        const railGeo = buildStairRunRailingGeometry(run, fromPlat, toPlat, state.volumes);
+        if (railGeo.getAttribute('position') && railGeo.getAttribute('position').count > 0) {
+            const railMat = state.viewMode === 'textured' ? getRailingMaterial() : getRailingGridMaterial();
+            const railMesh = new THREE.Mesh(railGeo, railMat);
+            railMesh.renderOrder = 1;
+            mesh.add(railMesh);
+        }
+    }
 
     stairRunMeshes.set(run.id, mesh);
     scene.add(mesh);
@@ -665,6 +690,28 @@ onKeyDown((e) => {
             showMessage(count > 0
                 ? `Platform + ${count} stair run${count > 1 ? 's' : ''} ${label}`
                 : `Platform ${label}`);
+            return;
+        }
+
+        // R = toggle railings on platform + connected stairs
+        if (e.code === 'KeyR' && selectedPlat && state.platformPhase === 'selected') {
+            e.preventDefault();
+            saveUndoState();
+            const newRailings = !selectedPlat.railings;
+            selectedPlat.railings = newRailings;
+            rebuildPlatform(selectedPlat);
+            const connectedRuns = state.stairRuns.filter(
+                r => r.fromPlatformId === selectedPlat.id || r.toPlatformId === selectedPlat.id
+            );
+            for (const run of connectedRuns) {
+                run.railings = newRailings;
+                rebuildStairRun(run);
+            }
+            const count = connectedRuns.length;
+            const label = newRailings ? 'ON' : 'OFF';
+            showMessage(count > 0
+                ? `Railings ${label} (platform + ${count} stair run${count > 1 ? 's' : ''})`
+                : `Railings ${label}`);
             return;
         }
 

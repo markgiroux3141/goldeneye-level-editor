@@ -290,13 +290,14 @@ export function buildStairRunGeometry(stairRun, fromPlatform, toPlatform, option
         );
 
         // Left side (perpMin)
+        const uOff = i * absStepRun;
         builder.addQuad(
             toWorld(runAxis, rFront, floorY, perpMin),
             toWorld(runAxis, rBack, floorY, perpMin),
             toWorld(runAxis, rBack, stepTopY, perpMin),
             toWorld(runAxis, rFront, stepTopY, perpMin),
             !xorFlip, sideZone,
-            ...(textured ? [[0, 0], [absStepRun, 0], [absStepRun, sideH], [0, sideH]] : []),
+            ...(textured ? [[uOff, 0], [uOff + absStepRun, 0], [uOff + absStepRun, sideH], [uOff, sideH]] : []),
         );
 
         // Right side (perpMax)
@@ -306,7 +307,7 @@ export function buildStairRunGeometry(stairRun, fromPlatform, toPlatform, option
             toWorld(runAxis, rFront, stepTopY, perpMax),
             toWorld(runAxis, rBack, stepTopY, perpMax),
             !xorFlip, sideZone,
-            ...(textured ? [[0, 0], [absStepRun, 0], [absStepRun, sideH], [0, sideH]] : []),
+            ...(textured ? [[uOff, 0], [uOff + absStepRun, 0], [uOff + absStepRun, sideH], [uOff, sideH]] : []),
         );
     }
 
@@ -436,6 +437,254 @@ export function buildStairRunPreviewLines(fromPt, toPt, width, stepHeight, riseO
     }
 
     return pts;
+}
+
+// ============================================================
+// RAILING GEOMETRY
+// ============================================================
+
+const RAILING_HEIGHT = 3.0;     // height above surface in WT
+const HANDRAIL_DEPTH = 0.2;     // perpendicular handrail strip depth in WT
+
+// Check if a platform edge is blocked by a volume wall
+function isEdgeAgainstWall(platform, edge, volumes) {
+    for (const vol of volumes) {
+        // Check if this volume's inner wall face aligns with the platform edge.
+        // A platform inside a room has edges at or near the volume's inner bounds.
+        // We also check outer bounds for platforms touching the outside of a wall.
+        let edgePos, edgeMin, edgeMax, volPerps, volMins, volMaxs;
+        if (edge === 'xMin') {
+            edgePos = platform.x;
+            edgeMin = platform.z; edgeMax = platform.maxZ;
+            volPerps = [vol.innerMinX, vol.innerMaxX, vol.outerMinX, vol.outerMaxX];
+            volMins = [vol.innerMinZ, vol.innerMinZ, vol.outerMinZ, vol.outerMinZ];
+            volMaxs = [vol.innerMaxZ, vol.innerMaxZ, vol.outerMaxZ, vol.outerMaxZ];
+        } else if (edge === 'xMax') {
+            edgePos = platform.maxX;
+            edgeMin = platform.z; edgeMax = platform.maxZ;
+            volPerps = [vol.innerMinX, vol.innerMaxX, vol.outerMinX, vol.outerMaxX];
+            volMins = [vol.innerMinZ, vol.innerMinZ, vol.outerMinZ, vol.outerMinZ];
+            volMaxs = [vol.innerMaxZ, vol.innerMaxZ, vol.outerMaxZ, vol.outerMaxZ];
+        } else if (edge === 'zMin') {
+            edgePos = platform.z;
+            edgeMin = platform.x; edgeMax = platform.maxX;
+            volPerps = [vol.innerMinZ, vol.innerMaxZ, vol.outerMinZ, vol.outerMaxZ];
+            volMins = [vol.innerMinX, vol.innerMinX, vol.outerMinX, vol.outerMinX];
+            volMaxs = [vol.innerMaxX, vol.innerMaxX, vol.outerMaxX, vol.outerMaxX];
+        } else { // zMax
+            edgePos = platform.maxZ;
+            edgeMin = platform.x; edgeMax = platform.maxX;
+            volPerps = [vol.innerMinZ, vol.innerMaxZ, vol.outerMinZ, vol.outerMaxZ];
+            volMins = [vol.innerMinX, vol.innerMinX, vol.outerMinX, vol.outerMinX];
+            volMaxs = [vol.innerMaxX, vol.innerMaxX, vol.outerMaxX, vol.outerMaxX];
+        }
+        for (let i = 0; i < volPerps.length; i++) {
+            if (Math.abs(volPerps[i] - edgePos) > 0.5) continue;
+            if (volMins[i] <= edgeMin && volMaxs[i] >= edgeMax) return true;
+        }
+    }
+    return false;
+}
+
+// Get the ranges along an edge (0..1) that are occupied by stair run widths
+function getStairOccupiedRanges(platform, edge, stairRuns) {
+    const ranges = [];
+    const edgeLen = platform.getEdgeLength(edge);
+
+    for (const run of stairRuns) {
+        let anchor = null;
+        if (run.fromPlatformId === platform.id && run.anchorFrom.edge === edge) anchor = run.anchorFrom;
+        if (run.toPlatformId === platform.id && run.anchorTo.edge === edge) anchor = run.anchorTo;
+        if (!anchor) continue;
+
+        // The stair is centered at the anchor point along the edge
+        const offset = anchor.offset != null ? anchor.offset : 0.5;
+        const halfW = (run.width / 2) / edgeLen; // half-width as fraction of edge length
+        const lo = Math.max(0, offset - halfW);
+        const hi = Math.min(1, offset + halfW);
+        ranges.push([lo, hi]);
+    }
+
+    // Sort by start and merge overlapping ranges
+    ranges.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    for (const r of ranges) {
+        if (merged.length > 0 && r[0] <= merged[merged.length - 1][1] + 0.001) {
+            merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], r[1]);
+        } else {
+            merged.push([...r]);
+        }
+    }
+    return merged;
+}
+
+// Get the free (unoccupied) segments of an edge as t-ranges in [0,1]
+function getFreeEdgeSegments(platform, edge, stairRuns) {
+    const occupied = getStairOccupiedRanges(platform, edge, stairRuns);
+    const free = [];
+    let cursor = 0;
+    for (const [lo, hi] of occupied) {
+        if (lo > cursor + 0.001) free.push([cursor, lo]);
+        cursor = hi;
+    }
+    if (cursor < 1 - 0.001) free.push([cursor, 1]);
+    return free;
+}
+
+/**
+ * Build railing geometry for a platform's exposed edges.
+ * Returns a BufferGeometry with simple quads (side plane + handrail).
+ * Railings are added to free segments of each edge (not blocked by walls or stairs).
+ */
+export function buildPlatformRailingGeometry(platform, stairRuns, volumes) {
+    const builder = new PlatformGeometryBuilder();
+    const yTop = platform.y;
+    const railTop = yTop + RAILING_HEIGHT;
+
+    const edges = ['xMin', 'xMax', 'zMin', 'zMax'];
+    for (const edge of edges) {
+        if (isEdgeAgainstWall(platform, edge, volumes)) continue;
+
+        const line = platform.getEdgeLine(edge);
+        const edgeNorm = Platform.edgeNormal(edge);
+        const edgeLen = platform.getEdgeLength(edge);
+        const freeSegments = getFreeEdgeSegments(platform, edge, stairRuns);
+
+        for (const [tStart, tEnd] of freeSegments) {
+            const segLen = (tEnd - tStart) * edgeLen;
+            if (segLen < 0.1) continue; // skip tiny slivers
+
+            // Interpolate start/end points along the edge
+            const x0 = line.start.x + (line.end.x - line.start.x) * tStart;
+            const z0 = line.start.z + (line.end.z - line.start.z) * tStart;
+            const x1 = line.start.x + (line.end.x - line.start.x) * tEnd;
+            const z1 = line.start.z + (line.end.z - line.start.z) * tEnd;
+
+            const uTiles = segLen / 1.5;
+            builder.addQuad(
+                [x0, yTop, z0],
+                [x1, yTop, z1],
+                [x1, railTop, z1],
+                [x0, railTop, z0],
+                false, 0,
+                [0, 0], [uTiles, 0], [uTiles, 1], [0, 1],
+            );
+
+            // Handrail plane
+            const dx = edgeNorm.x * HANDRAIL_DEPTH;
+            const dz = edgeNorm.z * HANDRAIL_DEPTH;
+            builder.addQuad(
+                [x0, railTop, z0],
+                [x1, railTop, z1],
+                [x1 + dx, railTop, z1 + dz],
+                [x0 + dx, railTop, z0 + dz],
+                true, 0,
+                [0, 0.95], [uTiles, 0.95], [uTiles, 1.0], [0, 1.0],
+            );
+        }
+    }
+
+    return builder.build();
+}
+
+/**
+ * Build railing geometry for a stair run (left and right side slopes).
+ * Returns a BufferGeometry.
+ */
+export function buildStairRunRailingGeometry(stairRun, fromPlatform, toPlatform, volumes) {
+    const builder = new PlatformGeometryBuilder();
+
+    const fromPt = resolveStairAnchor(fromPlatform, stairRun.anchorFrom);
+    const toPt = resolveStairAnchor(toPlatform, stairRun.anchorTo);
+    const topPt = fromPt.y >= toPt.y ? fromPt : toPt;
+    const bottomPt = fromPt.y >= toPt.y ? toPt : fromPt;
+    const topPlatform = fromPt.y >= toPt.y ? fromPlatform : toPlatform;
+    const bottomPlatform = fromPt.y >= toPt.y ? toPlatform : fromPlatform;
+    const topAnchor = fromPt.y >= toPt.y ? stairRun.anchorFrom : stairRun.anchorTo;
+    const bottomAnchor = fromPt.y >= toPt.y ? stairRun.anchorTo : stairRun.anchorFrom;
+
+    const rise = topPt.y - bottomPt.y;
+    if (rise === 0) return builder.build();
+
+    const { runAxis, runSign } = computeStairRunAxis(topPlatform, topAnchor, bottomPlatform, bottomAnchor, topPt, bottomPt);
+
+    const topRun = runAxis === 'x' ? topPt.x : topPt.z;
+    const bottomRun = runAxis === 'x' ? bottomPt.x : bottomPt.z;
+    const halfWidth = stairRun.width / 2;
+    const topPerp = runAxis === 'x' ? topPt.z : topPt.x;
+    const perpMin = topPerp - halfWidth;
+    const perpMax = topPerp + halfWidth;
+
+    const totalRun = Math.abs(bottomRun - topRun);
+    const slopeLen = Math.sqrt(totalRun * totalRun + rise * rise);
+
+    // Bottom and top of the railing along the slope
+    const botY = bottomPt.y;
+    const topY = topPt.y;
+    const botRun = bottomRun;
+    const topRunPos = topRun;
+
+    // Check each side against walls
+    const sides = [
+        { perp: perpMin, normalSign: -1 },  // left side
+        { perp: perpMax, normalSign: 1 },    // right side
+    ];
+
+    const RAILING_INSET = 0.05; // push railings slightly inward to avoid z-fighting
+
+    for (const side of sides) {
+        // Wall check: see if a volume wall (inner or outer face) aligns with this side
+        let blocked = false;
+        const runMin = Math.min(topRunPos, botRun);
+        const runMax = Math.max(topRunPos, botRun);
+        for (const vol of volumes) {
+            let volPerps, volRunMin, volRunMax;
+            if (runAxis === 'x') {
+                volPerps = [vol.innerMinZ, vol.innerMaxZ, vol.outerMinZ, vol.outerMaxZ];
+                volRunMin = vol.innerMinX; volRunMax = vol.innerMaxX;
+            } else {
+                volPerps = [vol.innerMinX, vol.innerMaxX, vol.outerMinX, vol.outerMaxX];
+                volRunMin = vol.innerMinZ; volRunMax = vol.innerMaxZ;
+            }
+            for (const vp of volPerps) {
+                if (Math.abs(vp - side.perp) > 0.5) continue;
+                if (volRunMin <= runMin && volRunMax >= runMax) {
+                    blocked = true;
+                    break;
+                }
+            }
+            if (blocked) break;
+        }
+        if (blocked) continue;
+
+        // Offset the railing slightly inward to avoid z-fighting with stair side faces
+        const insetPerp = side.perp + (-side.normalSign * RAILING_INSET);
+
+        // Side railing plane — sloped from bottom to top
+        const p0 = toWorld(runAxis, botRun, botY, insetPerp);
+        const p1 = toWorld(runAxis, topRunPos, topY, insetPerp);
+        const p2 = toWorld(runAxis, topRunPos, topY + RAILING_HEIGHT, insetPerp);
+        const p3 = toWorld(runAxis, botRun, botY + RAILING_HEIGHT, insetPerp);
+
+        const uTiles = slopeLen / 1.5;
+        builder.addQuad(p0, p1, p2, p3, side.normalSign > 0, 0,
+            [0, 0], [uTiles, 0], [uTiles, 1], [0, 1],
+        );
+
+        // Handrail plane — horizontal strip at railing top following slope
+        const nx = runAxis === 'x' ? 0 : side.normalSign * HANDRAIL_DEPTH;
+        const nz = runAxis === 'x' ? side.normalSign * HANDRAIL_DEPTH : 0;
+        const p4 = toWorld(runAxis, botRun, botY + RAILING_HEIGHT, insetPerp);
+        const p5 = toWorld(runAxis, topRunPos, topY + RAILING_HEIGHT, insetPerp);
+        const p6 = [p5[0] + nx, p5[1], p5[2] + nz];
+        const p7 = [p4[0] + nx, p4[1], p4[2] + nz];
+
+        builder.addQuad(p4, p5, p6, p7, side.normalSign < 0, 0,
+            [0, 0.95], [uTiles, 0.95], [uTiles, 1.0], [0, 1.0],
+        );
+    }
+
+    return builder.build();
 }
 
 // ============================================================

@@ -14,6 +14,7 @@ export class StairRun {
         this.stepHeight = stepHeight;           // height per step in WT units
         this.riseOverRun = riseOverRun;         // rise/run ratio (1 = 45 deg)
         this.grounded = false;                  // when true, side walls extend to Y=0
+        this.railings = false;                  // when true, adds railings to sides
     }
 
     // Resolve the world-space attachment point for one end of the stair run.
@@ -76,6 +77,7 @@ export class StairRun {
             stepHeight: this.stepHeight,
             riseOverRun: this.riseOverRun,
             grounded: this.grounded,
+            railings: this.railings,
         };
     }
 
@@ -86,6 +88,7 @@ export class StairRun {
             j.width, j.stepHeight, j.riseOverRun ?? 1,
         );
         r.grounded = j.grounded ?? false;
+        r.railings = j.railings ?? false;
         return r;
     }
 }

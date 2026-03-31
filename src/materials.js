@@ -62,6 +62,30 @@ export function initMaterials() {
         tex.minFilter = THREE.NearestMipMapLinearFilter;
         textureMap.set(name, tex);
     }
+
+    // Load transparent textures — convert black pixels to alpha=0
+    loader.load('public/transparent_textures/railing.bmp', (tex) => {
+        const img = tex.image;
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+            if (data[i] < 10 && data[i + 1] < 10 && data[i + 2] < 10) {
+                data[i + 3] = 0;
+            }
+        }
+        ctx.putImageData(imageData, 0, 0);
+        const rgbaTex = new THREE.CanvasTexture(canvas);
+        rgbaTex.wrapS = THREE.RepeatWrapping;
+        rgbaTex.wrapT = THREE.RepeatWrapping;
+        rgbaTex.magFilter = THREE.NearestFilter;
+        rgbaTex.minFilter = THREE.NearestMipMapLinearFilter;
+        textureMap.set('railing', rgbaTex);
+    });
 }
 
 export function getWallMaterial() {
@@ -131,4 +155,32 @@ export function getTexturedMaterialArrayForScheme(schemeName) {
 // Convenience alias for default scheme
 export function getTexturedMaterialArray() {
     return getTexturedMaterialArrayForScheme('facility_white_tile');
+}
+
+// Double-sided alpha-tested material for railings.
+// The railing BMP is converted to RGBA during init (black → transparent).
+export function getRailingMaterial() {
+    const baseTex = textureMap.get('railing');
+    if (!baseTex) {
+        return new THREE.MeshLambertMaterial({ color: 0xff00ff, side: THREE.DoubleSide });
+    }
+    const t = baseTex.clone();
+    t.repeat.set(1.0, 1.0);
+    t.needsUpdate = true;
+    return new THREE.MeshLambertMaterial({
+        map: t,
+        side: THREE.DoubleSide,
+        alphaTest: 0.5,
+        transparent: true,
+    });
+}
+
+// Simple wireframe-style material for railings in grid mode
+export function getRailingGridMaterial() {
+    return new THREE.MeshLambertMaterial({
+        color: 0xaaaa55,
+        side: THREE.DoubleSide,
+        opacity: 0.5,
+        transparent: true,
+    });
 }

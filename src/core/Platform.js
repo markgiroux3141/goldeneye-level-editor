@@ -11,6 +11,7 @@ export class Platform {
         this.sizeZ = sizeZ;    // Z dimension in WT units (>= 1)
         this.thickness = thickness; // slab depth in WT units (default 1)
         this.grounded = false;  // when true, extends down to Y=0
+        this.railings = false;  // when true, adds railings to exposed edges
     }
 
     // Computed bounds
@@ -73,12 +74,14 @@ export class Platform {
             sizeX: this.sizeX, sizeZ: this.sizeZ,
             thickness: this.thickness,
             grounded: this.grounded,
+            railings: this.railings,
         };
     }
 
     static fromJSON(j) {
         const p = new Platform(j.id, j.x, j.y, j.z, j.sizeX, j.sizeZ, j.thickness ?? 1);
         p.grounded = j.grounded ?? false;
+        p.railings = j.railings ?? false;
         return p;
     }
 }
