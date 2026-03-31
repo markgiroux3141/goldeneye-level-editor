@@ -520,7 +520,7 @@ function updateStairPreview() {
 
         if (previewWps.length >= 2) {
             const pts = buildStaircasePreviewLines(
-                previewWps, state.stairWidth, state.stairStepHeight, state.stairSide
+                previewWps, state.stairWidth, state.stairStepHeight, state.stairSide, state.stairRiseOverRun
             );
             if (pts.length >= 2) {
                 const geo = new THREE.BufferGeometry().setFromPoints(pts);

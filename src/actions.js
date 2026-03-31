@@ -617,7 +617,7 @@ export function placeStaircase(waypoints, showMessage, rebuildStaircaseCallback)
     const stair = new Staircase(
         state.nextStaircaseId++,
         waypoints.slice(), // copy the array
-        state.stairWidth, state.stairStepHeight, state.stairSide,
+        state.stairWidth, state.stairStepHeight, state.stairSide, state.stairRiseOverRun,
     );
 
     state.staircases.push(stair);

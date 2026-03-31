@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { WORLD_SCALE } from './core/Volume.js';
-import { getSegmentInfo, getSegmentWidthExtent } from './core/Staircase.js';
+import { getSegmentInfo, getSegmentWidthExtent, splitSegment } from './core/Staircase.js';
 
 const S = WORLD_SCALE;
 
@@ -355,7 +355,13 @@ export function buildStaircaseGeometry(stair) {
         if (seg.isFlat) {
             buildFlatWalkway(builder, wps[s], wps[s + 1], seg.runAxis, seg.runSign, stair.width, stair.side, floorY);
         } else {
-            buildStairRun(builder, adjustedTopPt, adjustedBottomPt, seg.steps, seg.runAxis, seg.runSign, stair.width, stair.side, floorY);
+            const split = splitSegment(seg, stair.riseOverRun, adjustedTopPt, adjustedBottomPt);
+            if (split.hasFlatPortion) {
+                buildFlatWalkway(builder, split.flatTopPt, split.flatBottomPt, seg.runAxis, seg.runSign, stair.width, stair.side, floorY);
+                buildStairRun(builder, split.stairTopPt, split.stairBottomPt, seg.steps, seg.runAxis, seg.runSign, stair.width, stair.side, floorY);
+            } else {
+                buildStairRun(builder, adjustedTopPt, adjustedBottomPt, seg.steps, seg.runAxis, seg.runSign, stair.width, stair.side, floorY);
+            }
         }
     }
 
@@ -473,7 +479,7 @@ function addLandingPreviewSegs(segs, wp, inRunAxis, inRunSign, outRunAxis, outRu
 /**
  * Build preview for a full staircase (all waypoints).
  */
-export function buildStaircasePreviewLines(waypoints, width, stepHeight, side) {
+export function buildStaircasePreviewLines(waypoints, width, stepHeight, side, riseOverRun = 1) {
     const segs = [];
 
     for (let s = 0; s < waypoints.length - 1; s++) {
@@ -498,7 +504,13 @@ export function buildStaircasePreviewLines(waypoints, width, stepHeight, side) {
         if (seg.isFlat) {
             addFlatPreviewSegs(segs, waypoints[s], waypoints[s + 1], seg.runAxis, seg.runSign, width, side);
         } else {
-            addRunPreviewSegs(segs, adjustedTopPt, seg.bottomPt, seg.steps, seg.runAxis, seg.runSign, width, side);
+            const split = splitSegment(seg, riseOverRun, adjustedTopPt, seg.bottomPt);
+            if (split.hasFlatPortion) {
+                addFlatPreviewSegs(segs, split.flatTopPt, split.flatBottomPt, seg.runAxis, seg.runSign, width, side);
+                addRunPreviewSegs(segs, split.stairTopPt, split.stairBottomPt, seg.steps, seg.runAxis, seg.runSign, width, side);
+            } else {
+                addRunPreviewSegs(segs, adjustedTopPt, seg.bottomPt, seg.steps, seg.runAxis, seg.runSign, width, side);
+            }
         }
     }
 

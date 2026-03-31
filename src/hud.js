@@ -13,6 +13,7 @@ const extrudeWidthInput = document.getElementById('extrude-width');
 const extrudeHeightInput = document.getElementById('extrude-height');
 const stairWidthInput = document.getElementById('stair-width');
 const stairStepHeightInput = document.getElementById('stair-step-height');
+const stairRiseRunInput = document.getElementById('stair-rise-run');
 let messageTimeout = null;
 
 // Sync HUD inputs to state
@@ -37,6 +38,9 @@ export function initHUD() {
     });
     stairStepHeightInput.addEventListener('change', () => {
         state.stairStepHeight = Math.max(1, parseInt(stairStepHeightInput.value) || 1);
+    });
+    stairRiseRunInput.addEventListener('change', () => {
+        state.stairRiseOverRun = Math.max(0.1, parseFloat(stairRiseRunInput.value) || 1);
     });
 
     // Listen for messages via EventBus

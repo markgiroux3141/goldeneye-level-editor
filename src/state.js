@@ -35,6 +35,7 @@ export const state = {
     stairWidth: 4,
     stairStepHeight: 1,       // height of each step in WT units
     stairSide: 'right',      // 'left' | 'right'
+    stairRiseOverRun: 1,      // rise/run ratio for step proportions (1 = 45°)
 };
 
 export function saveUndoState() {
