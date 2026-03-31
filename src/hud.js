@@ -15,6 +15,9 @@ const extrudeHeightInput = document.getElementById('extrude-height');
 const stairWidthInput = document.getElementById('stair-width');
 const stairStepHeightInput = document.getElementById('stair-step-height');
 const stairRiseRunInput = document.getElementById('stair-rise-run');
+const platformSizeXInput = document.getElementById('platform-size-x');
+const platformSizeZInput = document.getElementById('platform-size-z');
+const platformThicknessInput = document.getElementById('platform-thickness');
 let messageTimeout = null;
 
 // Sync HUD inputs to state
@@ -43,6 +46,15 @@ export function initHUD() {
     stairRiseRunInput.addEventListener('change', () => {
         state.stairRiseOverRun = Math.max(0.1, parseFloat(stairRiseRunInput.value) || 1);
     });
+    platformSizeXInput.addEventListener('change', () => {
+        state.platformSizeX = Math.max(1, parseInt(platformSizeXInput.value) || 4);
+    });
+    platformSizeZInput.addEventListener('change', () => {
+        state.platformSizeZ = Math.max(1, parseInt(platformSizeZInput.value) || 4);
+    });
+    platformThicknessInput.addEventListener('change', () => {
+        state.platformThickness = Math.max(1, parseInt(platformThicknessInput.value) || 1);
+    });
 
     // Listen for messages via EventBus
     on('message', ({ text }) => showMessage(text));
@@ -55,12 +67,27 @@ export function showMessage(msg) {
     messageTimeout = setTimeout(() => { messageEl.style.opacity = '0'; }, 2000);
 }
 
-const TOOL_LABELS = { push_pull: 'PUSH/PULL', door: 'DOOR', extrude: 'EXTRUDE', stair: 'STAIR' };
+const TOOL_LABELS = { push_pull: 'PUSH/PULL', door: 'DOOR', extrude: 'EXTRUDE', stair: 'STAIR', platform: 'PLATFORM' };
 
 export function updateHUD(camera) {
     const lines = [];
 
-    if (state.tool === 'stair') {
+    if (state.tool === 'platform') {
+        if (state.platformPhase === 'idle') {
+            lines.push(`Click to place or select platform`);
+        } else if (state.platformPhase === 'selected') {
+            const plat = state.platforms.find(p => p.id === state.selectedPlatformId);
+            if (plat) {
+                lines.push(`Platform ${plat.id}: ${plat.sizeX}x${plat.sizeZ} at Y=${plat.y}`);
+                lines.push(`Click arrows to move, edge handles to scale`);
+                lines.push(`X=delete  C=connect stairs`);
+            }
+        } else if (state.platformPhase === 'connecting_dst') {
+            lines.push(`Click destination platform or floor`);
+        } else if (state.platformPhase === 'connecting_src') {
+            lines.push(`Slide along edge — click to place stairs`);
+        }
+    } else if (state.tool === 'stair') {
         if (state.stairPhase === 'placing') {
             lines.push(`Waypoints: ${state.stairWaypoints.length}`);
             lines.push(`Click to add, Enter to finalize`);
@@ -95,7 +122,7 @@ export function updateHUD(camera) {
         }
     }
 
-    lines.push(`Volumes: ${state.volumes.length} | Connections: ${state.connections.length} | Stairs: ${state.staircases.length}`);
+    lines.push(`Volumes: ${state.volumes.length} | Connections: ${state.connections.length} | Stairs: ${state.staircases.length} | Platforms: ${state.platforms.length}`);
     statusEl.innerHTML = lines.join('<br>');
 
     const toolName = TOOL_LABELS[state.tool] || state.tool;

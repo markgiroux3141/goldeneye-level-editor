@@ -128,11 +128,13 @@
             Click - Select Face<br>
             +/- Push/Pull Face<br>
             V - Toggle View (Grid/Textured)<br>
-            T - Cycle Tool (Push/Pull | Door | Extrude | Stair)<br>
+            T - Cycle Tool (Push/Pull | Door | Extrude | Stair | Platform)<br>
             Shift+Click - Multi-Select (Extrude tool)<br>
             R - Toggle Stair Side (L/R)<br>
             Enter - Finalize Staircase<br>
             Backspace - Undo Last Waypoint<br>
+            Click arrows/handles to move/scale Platform<br>
+            C - Connect Stairs (Platform tool)<br>
             1-9 - Set Texture Scheme<br>
             X - Delete Volume<br>
             Ctrl+Z - Undo<br>
@@ -151,6 +153,9 @@
             <label>Stair W: <input id="stair-width" type="number" value="4" min="1" max="40" step="1"></label>
             <label>Step H: <input id="stair-step-height" type="number" value="1" min="1" max="10" step="1"></label>
             <label>Rise/Run: <input id="stair-rise-run" type="number" value="1" min="0.1" max="10" step="0.1"></label>
+            <label>Plat X: <input id="platform-size-x" type="number" value="4" min="1" max="40" step="1"></label>
+            <label>Plat Z: <input id="platform-size-z" type="number" value="4" min="1" max="40" step="1"></label>
+            <label>Plat Th: <input id="platform-thickness" type="number" value="1" min="1" max="10" step="1"></label>
         </div>
         <div id="message"></div>
     </div>
