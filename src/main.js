@@ -172,16 +172,9 @@ document.addEventListener('mousedown', (e) => {
     if (state.tool === 'stair') {
         if (!hit) return; // need a surface to click on
         const snapped = snapToWTGrid(hit.point);
-        if (state.stairPhase === 'idle') {
-            // First click — set top point
-            state.stairTopPoint = snapped;
-            state.stairPhase = 'top_set';
-            showMessage(`Top set at (${snapped.x}, ${snapped.y}, ${snapped.z})`);
-        } else if (state.stairPhase === 'top_set') {
-            // Second click — place staircase
-            placeStaircase(state.stairTopPoint, snapped, showMessage, rebuildStaircase);
-            clearStairState();
-        }
+        state.stairWaypoints.push(snapped);
+        state.stairPhase = 'placing';
+        showMessage(`Waypoint ${state.stairWaypoints.length} at (${snapped.x}, ${snapped.y}, ${snapped.z})`);
         return;
     }
 
@@ -254,12 +247,35 @@ onKeyDown((e) => {
         return;
     }
 
-    // Stair tool: R to toggle side
-    if (e.code === 'KeyR' && state.tool === 'stair' && isPointerLocked()) {
-        e.preventDefault();
-        state.stairSide = state.stairSide === 'right' ? 'left' : 'right';
-        showMessage('Stair side: ' + state.stairSide.toUpperCase());
-        return;
+    // Stair tool keys
+    if (state.tool === 'stair' && isPointerLocked()) {
+        if (e.code === 'KeyR') {
+            e.preventDefault();
+            state.stairSide = state.stairSide === 'right' ? 'left' : 'right';
+            showMessage('Stair side: ' + state.stairSide.toUpperCase());
+            return;
+        }
+        if (e.code === 'Enter' && state.stairPhase === 'placing') {
+            e.preventDefault();
+            if (state.stairWaypoints.length >= 2) {
+                placeStaircase(state.stairWaypoints, showMessage, rebuildStaircase);
+                clearStairState();
+            } else {
+                showMessage('Need at least 2 waypoints');
+            }
+            return;
+        }
+        if (e.code === 'Backspace' && state.stairPhase === 'placing') {
+            e.preventDefault();
+            state.stairWaypoints.pop();
+            if (state.stairWaypoints.length === 0) {
+                state.stairPhase = 'idle';
+                showMessage('All waypoints removed');
+            } else {
+                showMessage(`Waypoint removed (${state.stairWaypoints.length} remaining)`);
+            }
+            return;
+        }
     }
 
     if (e.code === 'KeyT' && isPointerLocked()) {
@@ -457,8 +473,26 @@ function updateExtrudePreview() {
 // ============================================================
 // STAIR PREVIEW
 // ============================================================
+function drawMarkerCube(cx, cy, cz, material) {
+    const s = 0.5;
+    const W = WORLD_SCALE;
+    const pts = [
+        new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
+        new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz-s)*W),
+        new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz-s)*W),
+        new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz-s)*W),
+        new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
+        new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
+        new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz+s)*W),
+        new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz+s)*W),
+        new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz+s)*W),
+        new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
+    ];
+    const geo = new THREE.BufferGeometry().setFromPoints(pts);
+    stairPreviewGroup.add(new THREE.Line(geo, material));
+}
+
 function updateStairPreview() {
-    // Clear previous preview
     while (stairPreviewGroup.children.length > 0) {
         const child = stairPreviewGroup.children[0];
         stairPreviewGroup.remove(child);
@@ -471,62 +505,28 @@ function updateStairPreview() {
     if (!hit) return;
 
     const snapped = snapToWTGrid(hit.point);
-    const W = WORLD_SCALE;
 
     if (state.stairPhase === 'idle') {
-        // Yellow marker at snapped position
-        const s = 0.5; // half-size of marker cube in WT
-        const cx = snapped.x, cy = snapped.y, cz = snapped.z;
-        const pts = [
-            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
-            new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz-s)*W),
-            new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz-s)*W),
-            new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz-s)*W),
-            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
-            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
-            new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz+s)*W),
-            new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz+s)*W),
-            new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz+s)*W),
-            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
-        ];
-        const geo = new THREE.BufferGeometry().setFromPoints(pts);
-        stairPreviewGroup.add(new THREE.Line(geo, stairMarkerMat));
-    } else if (state.stairPhase === 'top_set') {
-        // Green wireframe staircase preview from stored top to current hover
-        const topPt = state.stairTopPoint;
-        const bottomPt = snapped;
+        // Yellow marker at hover position
+        drawMarkerCube(snapped.x, snapped.y, snapped.z, stairMarkerMat);
+    } else if (state.stairPhase === 'placing') {
+        // Draw yellow markers at all committed waypoints
+        for (const wp of state.stairWaypoints) {
+            drawMarkerCube(wp.x, wp.y, wp.z, stairMarkerMat);
+        }
 
-        // Validate: need height difference and horizontal distance
-        if (topPt.y > bottomPt.y) {
-            const dx = Math.abs(topPt.x - bottomPt.x);
-            const dz = Math.abs(topPt.z - bottomPt.z);
-            if (dx > 0 || dz > 0) {
-                const previewSteps = Math.max(1, Math.round((topPt.y - bottomPt.y) / state.stairStepHeight));
-                const pts = buildStaircasePreviewLines(
-                    topPt, bottomPt, state.stairWidth, previewSteps, state.stairSide
-                );
+        // Build preview of committed segments + current hover as next waypoint
+        const previewWps = [...state.stairWaypoints, snapped];
+
+        if (previewWps.length >= 2) {
+            const pts = buildStaircasePreviewLines(
+                previewWps, state.stairWidth, state.stairStepHeight, state.stairSide
+            );
+            if (pts.length >= 2) {
                 const geo = new THREE.BufferGeometry().setFromPoints(pts);
                 stairPreviewGroup.add(new THREE.LineSegments(geo, stairPreviewMat));
             }
         }
-
-        // Also draw a yellow marker at the stored top point
-        const s = 0.5;
-        const cx = topPt.x, cy = topPt.y, cz = topPt.z;
-        const markerPts = [
-            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
-            new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz-s)*W),
-            new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz-s)*W),
-            new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz-s)*W),
-            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
-            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
-            new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz+s)*W),
-            new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz+s)*W),
-            new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz+s)*W),
-            new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
-        ];
-        const markerGeo = new THREE.BufferGeometry().setFromPoints(markerPts);
-        stairPreviewGroup.add(new THREE.Line(markerGeo, stairMarkerMat));
     }
 }
 

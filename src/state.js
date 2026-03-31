@@ -30,8 +30,8 @@ export const state = {
     extrudeHeight: 1,
 
     // Stair tool state (transient — not serialized or in undo snapshots)
-    stairPhase: 'idle',       // 'idle' | 'top_set'
-    stairTopPoint: null,      // { x, y, z } in WT units
+    stairPhase: 'idle',       // 'idle' | 'placing'
+    stairWaypoints: [],       // [{x, y, z}, ...] in WT units — committed waypoints
     stairWidth: 4,
     stairStepHeight: 1,       // height of each step in WT units
     stairSide: 'right',      // 'left' | 'right'

@@ -56,12 +56,12 @@ export function updateHUD(camera) {
     const lines = [];
 
     if (state.tool === 'stair') {
-        if (state.stairPhase === 'top_set') {
-            const tp = state.stairTopPoint;
-            lines.push(`Top: (${tp.x}, ${tp.y}, ${tp.z})`);
-            lines.push(`Click bottom of staircase`);
+        if (state.stairPhase === 'placing') {
+            lines.push(`Waypoints: ${state.stairWaypoints.length}`);
+            lines.push(`Click to add, Enter to finalize`);
+            lines.push(`Backspace to undo last point`);
         } else {
-            lines.push(`Click top of staircase`);
+            lines.push(`Click first waypoint`);
         }
         lines.push(`Side: ${state.stairSide.toUpperCase()} (R to toggle)`);
     } else if (state.tool === 'extrude') {

@@ -1,45 +1,68 @@
-// Staircase — a solid stepped structure connecting two height levels
+// Staircase — a solid stepped structure with one or more segments and landings
+// Waypoints define the anchor edge. Width extends perpendicular based on 'side'.
+// 'right'/'left' is relative to the walk direction (top→bottom), using up × walkDir.
 
 export class Staircase {
-    constructor(id, topX, topY, topZ, bottomX, bottomY, bottomZ, width, stepHeight, side) {
+    constructor(id, waypoints, width, stepHeight, side) {
         this.id = id;
-        this.topX = topX;
-        this.topY = topY;
-        this.topZ = topZ;
-        this.bottomX = bottomX;
-        this.bottomY = bottomY;
-        this.bottomZ = bottomZ;
+        this.waypoints = waypoints;   // [{x, y, z}, ...] in WT units (at least 2)
         this.width = width;           // perpendicular width in WT units
         this.stepHeight = stepHeight; // height of each step in WT units
-        this.side = side;             // 'left' | 'right' — which side width extends from anchor line
-    }
-
-    // Derived: number of steps based on total rise and step height
-    get steps() {
-        return Math.max(1, Math.round((this.topY - this.bottomY) / this.stepHeight));
-    }
-
-    // Derived: which horizontal axis the staircase runs along
-    get runAxis() {
-        const dx = Math.abs(this.topX - this.bottomX);
-        const dz = Math.abs(this.topZ - this.bottomZ);
-        return dx >= dz ? 'x' : 'z';
+        this.side = side;             // 'left' | 'right'
     }
 
     toJSON() {
         return {
             id: this.id,
-            topX: this.topX, topY: this.topY, topZ: this.topZ,
-            bottomX: this.bottomX, bottomY: this.bottomY, bottomZ: this.bottomZ,
+            waypoints: this.waypoints,
             width: this.width, stepHeight: this.stepHeight, side: this.side,
         };
     }
 
     static fromJSON(j) {
-        return new Staircase(
-            j.id, j.topX, j.topY, j.topZ,
-            j.bottomX, j.bottomY, j.bottomZ,
-            j.width, j.stepHeight, j.side,
-        );
+        return new Staircase(j.id, j.waypoints, j.width, j.stepHeight, j.side);
     }
+}
+
+/**
+ * Compute segment info between two waypoints.
+ * runSign: +1 if walking in positive axis direction, -1 if negative.
+ */
+export function getSegmentInfo(wpA, wpB, stepHeight) {
+    const dx = Math.abs(wpA.x - wpB.x);
+    const dz = Math.abs(wpA.z - wpB.z);
+    const runAxis = dx >= dz ? 'x' : 'z';
+    const rise = Math.abs(wpA.y - wpB.y);
+    const topPt = wpA.y >= wpB.y ? wpA : wpB;
+    const bottomPt = wpA.y >= wpB.y ? wpB : wpA;
+    const steps = rise > 0 ? Math.max(1, Math.round(rise / stepHeight)) : 0;
+
+    // Walk direction: from top toward bottom (descending)
+    const topRun = runAxis === 'x' ? topPt.x : topPt.z;
+    const bottomRun = runAxis === 'x' ? bottomPt.x : bottomPt.z;
+    const runSign = bottomRun >= topRun ? 1 : -1;
+
+    return { runAxis, runSign, topPt, bottomPt, steps, isFlat: rise === 0 };
+}
+
+/**
+ * Compute the perpendicular width extent for a segment.
+ * 'right'/'left' is relative to walk direction using cross product up × walkDir:
+ *   Walk +X → right = -Z    Walk -X → right = +Z
+ *   Walk +Z → right = +X    Walk -Z → right = -X
+ */
+export function getSegmentWidthExtent(topPt, runAxis, runSign, width, side) {
+    const anchor = runAxis === 'x' ? topPt.z : topPt.x;
+
+    // Determine if "right" extends in the positive perpendicular direction
+    let rightIsPositive;
+    if (runAxis === 'x') {
+        rightIsPositive = runSign < 0; // walk +X → right is -Z, walk -X → right is +Z
+    } else {
+        rightIsPositive = runSign > 0; // walk +Z → right is +X, walk -Z → right is -X
+    }
+
+    const extendPositive = (side === 'right') === rightIsPositive;
+    if (extendPositive) return { perpMin: anchor, perpMax: anchor + width };
+    return { perpMin: anchor - width, perpMax: anchor };
 }
