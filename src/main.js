@@ -6,7 +6,7 @@ import { initInput, initKeyActions, onKeyDown, isPointerLocked } from './input.j
 import { updateCamera } from './camera.js';
 import { Volume, WORLD_SCALE } from './core/Volume.js';
 import { state, deserializeLevel } from './state.js';
-import { initMaterials, getWallMaterial } from './materials.js';
+import { initMaterials, getWallMaterial, getTexturedMaterialArray } from './materials.js';
 import { buildVolumeGeometry } from './geometry.js';
 import { getConnectionsForFace, computeDoorPlacement } from './core/Connection.js';
 import { pickFace } from './raycaster.js';
@@ -68,11 +68,21 @@ function rebuildVolume(vol) {
     }
 
     const conns = getVolumeConnections(vol.id);
-    const { geometry, faceIds } = buildVolumeGeometry(vol, conns, state.selectedFace);
+    const options = {};
+    if (state.viewMode === 'textured') {
+        options.viewMode = 'textured';
+        options.wallSplitV = vol.y + Math.floor(state.doorHeight * 0.75);
+    }
+    const { geometry, faceIds } = buildVolumeGeometry(vol, conns, state.selectedFace, options);
 
-    const material = getWallMaterial();
-    material.vertexColors = true;
-    material.map.repeat.set(1, 1);
+    let material;
+    if (state.viewMode === 'textured') {
+        material = getTexturedMaterialArray();
+    } else {
+        material = getWallMaterial();
+        material.vertexColors = true;
+        material.map.repeat.set(1, 1);
+    }
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData = { volumeId: vol.id };
 
@@ -276,6 +286,14 @@ onKeyDown((e) => {
             }
             return;
         }
+    }
+
+    if (e.code === 'KeyV' && isPointerLocked()) {
+        e.preventDefault();
+        state.viewMode = state.viewMode === 'grid' ? 'textured' : 'grid';
+        showMessage('View: ' + (state.viewMode === 'grid' ? 'Grid' : 'Textured'));
+        rebuildAllVolumes();
+        return;
     }
 
     if (e.code === 'KeyT' && isPointerLocked()) {

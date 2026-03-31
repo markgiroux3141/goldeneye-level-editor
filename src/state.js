@@ -36,6 +36,9 @@ export const state = {
     stairStepHeight: 1,       // height of each step in WT units
     stairSide: 'right',      // 'left' | 'right'
     stairRiseOverRun: 1,      // rise/run ratio for step proportions (1 = 45°)
+
+    // View mode (transient — not serialized or in undo snapshots)
+    viewMode: 'grid',         // 'grid' | 'textured'
 };
 
 export function saveUndoState() {

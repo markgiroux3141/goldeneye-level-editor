@@ -30,10 +30,12 @@ class GeometryBuilder {
         this.colors = [];
         this.indices = [];
         this.faceIds = [];
+        this.zones = [];     // material zone per quad
         this.vertexCount = 0;
+        this.quadCount = 0;
     }
 
-    addQuad(p0, p1, p2, p3, uv0, uv1, uv2, uv3, faceId, highlight, flip = false) {
+    addQuad(p0, p1, p2, p3, uv0, uv1, uv2, uv3, faceId, highlight, flip = false, zone = 0) {
         const base = this.vertexCount;
 
         // Flip reverses winding by swapping p1↔p3 (and their UVs)
@@ -66,7 +68,9 @@ class GeometryBuilder {
 
         this.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
         this.faceIds.push(faceId, faceId);
+        this.zones.push(zone);
         this.vertexCount += 4;
+        this.quadCount++;
     }
 
     build() {
@@ -75,7 +79,55 @@ class GeometryBuilder {
         geo.setAttribute('normal', new THREE.Float32BufferAttribute(this.normals, 3));
         geo.setAttribute('uv', new THREE.Float32BufferAttribute(this.uvs, 2));
         geo.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 3));
-        geo.setIndex(this.indices);
+
+        // Check if we need material groups (multiple zones)
+        const uniqueZones = new Set(this.zones);
+        if (uniqueZones.size <= 1) {
+            // Single zone — no reordering needed
+            geo.setIndex(this.indices);
+            if (uniqueZones.size === 1) {
+                const z = this.zones[0];
+                geo.addGroup(0, this.indices.length, z);
+            }
+            return geo;
+        }
+
+        // Multiple zones — reorder indices by zone and emit groups
+        // Build array of { quadIndex, zone } then sort by zone
+        const quads = this.zones.map((z, i) => ({ idx: i, zone: z }));
+        quads.sort((a, b) => a.zone - b.zone);
+
+        const newIndices = [];
+        const newFaceIds = [];
+
+        for (const q of quads) {
+            const srcIdx = q.idx * 6;
+            for (let j = 0; j < 6; j++) newIndices.push(this.indices[srcIdx + j]);
+            const srcFace = q.idx * 2;
+            newFaceIds.push(this.faceIds[srcFace], this.faceIds[srcFace + 1]);
+        }
+
+        geo.setIndex(newIndices);
+
+        // Emit groups per zone
+        let groupStart = 0;
+        let currentZone = quads[0].zone;
+        let groupCount = 0;
+
+        for (const q of quads) {
+            if (q.zone !== currentZone) {
+                geo.addGroup(groupStart, groupCount, currentZone);
+                groupStart += groupCount;
+                groupCount = 0;
+                currentZone = q.zone;
+            }
+            groupCount += 6; // 6 indices per quad (2 triangles)
+        }
+        geo.addGroup(groupStart, groupCount, currentZone);
+
+        // Replace faceIds with reordered version
+        this.faceIds = newFaceIds;
+
         return geo;
     }
 }
@@ -101,7 +153,8 @@ function wallNeedsWindingFix(axis, side) {
 
 // Build geometry for a single volume.
 // faceConnections: array of connections affecting this volume's faces
-export function buildVolumeGeometry(vol, faceConnections, selectedFace) {
+// options: { viewMode: 'grid'|'textured', wallSplitV: number }
+export function buildVolumeGeometry(vol, faceConnections, selectedFace, options = {}) {
     const builder = new GeometryBuilder();
 
     const faces = [
@@ -122,50 +175,100 @@ export function buildVolumeGeometry(vol, faceConnections, selectedFace) {
             }
             return false;
         });
-        buildFace(builder, vol, face.axis, face.side, conns, selectedFace, flip);
+        buildFace(builder, vol, face.axis, face.side, conns, selectedFace, flip, options);
     }
 
     return { geometry: builder.build(), faceIds: builder.faceIds };
 }
 
 // ============================================================
+// ZONE HELPERS
+// ============================================================
+
+function getFaceZone(axis, side, options) {
+    if (options.viewMode !== 'textured') return 0;
+    if (axis === 'y' && side === 'min') return 0;  // floor
+    if (axis === 'y' && side === 'max') return 1;   // ceiling
+    return 2; // walls default to lower wall zone (split handles upper)
+}
+
+// ============================================================
 // FACE BUILDERS
 // ============================================================
 
-function buildFace(builder, vol, axis, side, connections, selectedFace, flip) {
+function buildFace(builder, vol, axis, side, connections, selectedFace, flip, options) {
     if (connections.length === 0) {
-        buildSolidFace(builder, vol, axis, side, selectedFace, flip);
+        buildSolidFace(builder, vol, axis, side, selectedFace, flip, options);
     } else {
-        buildFaceWithConnections(builder, vol, axis, side, connections, selectedFace, flip);
+        buildFaceWithConnections(builder, vol, axis, side, connections, selectedFace, flip, options);
     }
 }
 
-function buildSolidFace(builder, vol, axis, side, selectedFace, flip = false) {
+function buildSolidFace(builder, vol, axis, side, selectedFace, flip = false, options = {}) {
     const pos = getFacePosition(vol, axis, side);
     const bounds = getVolumeFaceBounds(vol, axis);
     const faceId = { volumeId: vol.id, axis, side, position: pos, bounds };
     const hl = facesMatch(selectedFace, faceId);
 
     const { u0, u1, v0, v1 } = bounds;
-    const uW = u1 - u0, vH = v1 - v0;
 
     // XOR: correct natural winding, then apply protrusion flip
     const effectiveFlip = wallNeedsWindingFix(axis, side) !== flip;
 
+    // For wall faces in textured mode, split at the wall split height
+    const isWall = axis === 'x' || axis === 'z';
+    const textured = options.viewMode === 'textured';
+    const splitV = options.wallSplitV;
+
+    if (isWall && textured && splitV !== undefined && v0 < splitV && splitV < v1) {
+        // Split into lower and upper quads
+        const lowerH = splitV - v0;
+        const upperH = v1 - splitV;
+        const uW = u1 - u0;
+
+        if (axis === 'x') {
+            builder.addQuad(
+                [pos, v0, u0], [pos, v0, u1], [pos, splitV, u1], [pos, splitV, u0],
+                [0, 0], [uW, 0], [uW, lowerH], [0, lowerH], faceId, hl, effectiveFlip, 2
+            );
+            builder.addQuad(
+                [pos, splitV, u0], [pos, splitV, u1], [pos, v1, u1], [pos, v1, u0],
+                [0, 0], [uW, 0], [uW, upperH], [0, upperH], faceId, hl, effectiveFlip, 3
+            );
+        } else { // z
+            builder.addQuad(
+                [u0, v0, pos], [u1, v0, pos], [u1, splitV, pos], [u0, splitV, pos],
+                [0, 0], [uW, 0], [uW, lowerH], [0, lowerH], faceId, hl, effectiveFlip, 2
+            );
+            builder.addQuad(
+                [u0, splitV, pos], [u1, splitV, pos], [u1, v1, pos], [u0, v1, pos],
+                [0, 0], [uW, 0], [uW, upperH], [0, upperH], faceId, hl, effectiveFlip, 3
+            );
+        }
+        return;
+    }
+
+    // Single quad — determine zone
+    const zone = isWall && textured
+        ? (splitV !== undefined && v1 <= splitV ? 2 : splitV !== undefined && v0 >= splitV ? 3 : 2)
+        : getFaceZone(axis, side, options);
+
+    const uW = u1 - u0, vH = v1 - v0;
+
     if (axis === 'x') {
         builder.addQuad(
             [pos, v0, u0], [pos, v0, u1], [pos, v1, u1], [pos, v1, u0],
-            [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip
+            [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip, zone
         );
     } else if (axis === 'y') {
         builder.addQuad(
             [u0, pos, v0], [u1, pos, v0], [u1, pos, v1], [u0, pos, v1],
-            [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip
+            [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip, zone
         );
     } else {
         builder.addQuad(
             [u0, v0, pos], [u1, v0, pos], [u1, v1, pos], [u0, v1, pos],
-            [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip
+            [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip, zone
         );
     }
 }
@@ -174,7 +277,7 @@ function buildSolidFace(builder, vol, axis, side, selectedFace, flip = false) {
 // FACE WITH CONNECTION OPENINGS
 // ============================================================
 
-function buildFaceWithConnections(builder, vol, axis, side, connections, selectedFace, flip = false) {
+function buildFaceWithConnections(builder, vol, axis, side, connections, selectedFace, flip = false, options = {}) {
     const innerPos = getFacePosition(vol, axis, side);
     const t = WALL_THICKNESS;
     const outerPos = side === 'min' ? innerPos - t : innerPos + t;
@@ -192,21 +295,24 @@ function buildFaceWithConnections(builder, vol, axis, side, connections, selecte
     }));
 
     // --- Generate wall fill quads ONCE for all holes ---
-    buildWallWithMultipleHoles(builder, axis, innerPos, side, ru0, ru1, rv0, rv1, holes, wallFaceId, wallHl, flip);
+    buildWallWithMultipleHoles(builder, axis, innerPos, side, ru0, ru1, rv0, rv1, holes, wallFaceId, wallHl, flip, options);
 
     // --- Per-connection: tunnel + exit cap ---
+    const tunnelWallZone = options.viewMode === 'textured' ? 5 : 0;
+    const tunnelFloorZone = options.viewMode === 'textured' ? 6 : 0;
     for (const conn of connections) {
         const { u0: du0, u1: du1, v0: dv0, v1: dv1 } = conn.bounds;
         const isASide = conn.volAId === vol.id;
 
         if (isASide) {
-            buildTunnelQuads(builder, axis, side, innerPos, outerPos, du0, du1, dv0, dv1, t, tunnelFaceId);
+            buildTunnelQuads(builder, axis, side, innerPos, outerPos, du0, du1, dv0, dv1, t, tunnelFaceId, tunnelWallZone, tunnelFloorZone);
 
             if (conn.volBId === null) {
                 const exitBounds = { u0: du0, u1: du1, v0: dv0, v1: dv1 };
                 const exitFaceId = { volumeId: vol.id, axis, side, position: outerPos, bounds: exitBounds };
                 const exitHl = facesMatch(selectedFace, exitFaceId);
-                buildExitCap(builder, axis, side, outerPos, du0, du1, dv0, dv1, exitFaceId, exitHl);
+                const exitZone = options.viewMode === 'textured' ? 3 : 0;
+                buildExitCap(builder, axis, side, outerPos, du0, du1, dv0, dv1, exitFaceId, exitHl, exitZone);
             }
         }
     }
@@ -215,22 +321,49 @@ function buildFaceWithConnections(builder, vol, axis, side, connections, selecte
 // Generate wall quads for a face with multiple rectangular holes cut out.
 // Uses column-based subdivision: sort holes by U, create vertical strips between them,
 // then fill above/below each hole in its column.
-function buildWallWithMultipleHoles(builder, axis, pos, side, ru0, ru1, rv0, rv1, holes, faceId, hl, flip = false) {
+function buildWallWithMultipleHoles(builder, axis, pos, side, ru0, ru1, rv0, rv1, holes, faceId, hl, flip = false, options = {}) {
     // XOR: correct natural winding, then apply protrusion flip
     const effectiveFlip = wallNeedsWindingFix(axis, side) !== flip;
 
+    const textured = options.viewMode === 'textured';
+    const splitV = options.wallSplitV;
+
+    // Helper to emit a wall quad, splitting at splitV if needed
     const addQ = (u0, u1, v0, v1) => {
+        const uW = u1 - u0, vH = v1 - v0;
+        if (uW <= 0 || vH <= 0) return;
+
+        // Check if we need to split this quad at splitV
+        if (textured && splitV !== undefined && v0 < splitV && splitV < v1) {
+            // Lower portion
+            addSingleQ(u0, u1, v0, splitV, 2);
+            // Upper portion
+            addSingleQ(u0, u1, splitV, v1, 3);
+            return;
+        }
+
+        // Single quad with appropriate zone
+        let zone = 0;
+        if (textured) {
+            if (splitV !== undefined && v1 <= splitV) zone = 2;       // below split
+            else if (splitV !== undefined && v0 >= splitV) zone = 3;  // above split
+            else zone = 2; // default to lower wall
+        }
+        addSingleQ(u0, u1, v0, v1, zone);
+    };
+
+    const addSingleQ = (u0, u1, v0, v1, zone) => {
         const uW = u1 - u0, vH = v1 - v0;
         if (uW <= 0 || vH <= 0) return;
         if (axis === 'x') {
             builder.addQuad(
                 [pos, v0, u0], [pos, v0, u1], [pos, v1, u1], [pos, v1, u0],
-                [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip
+                [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip, zone
             );
         } else {
             builder.addQuad(
                 [u0, v0, pos], [u1, v0, pos], [u1, v1, pos], [u0, v1, pos],
-                [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip
+                [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip, zone
             );
         }
     };
@@ -279,7 +412,7 @@ function buildWallWithMultipleHoles(builder, axis, pos, side, ru0, ru1, rv0, rv1
     }
 }
 
-function buildTunnelQuads(builder, axis, side, innerPos, outerPos, du0, du1, dv0, dv1, t, tunnelFaceId) {
+function buildTunnelQuads(builder, axis, side, innerPos, outerPos, du0, du1, dv0, dv1, t, tunnelFaceId, wallZone = 0, floorZone = 0) {
     const dw = du1 - du0, dh = dv1 - dv0;
 
     // Tunnel faces always face inward to the passage, independent of volume invertNormals.
@@ -287,54 +420,61 @@ function buildTunnelQuads(builder, axis, side, innerPos, outerPos, du0, du1, dv0
     // for x-min and z-max tunnels.
     const tunnelFlip = (axis === 'x' && side === 'min') || (axis === 'z' && side === 'max');
 
+    // Gradient UVs: stretch texture across full door dimension, keep square aspect.
+    // Sides: V spans 0→1 over door height, U keeps square proportions (t/dh).
+    // Top: V spans 0→1 over door width, U keeps square proportions (t/dw).
+    // Floor: rotated 90° (swap U/V axes).
+    const sideU = t / dh;  // square aspect for side depth
+    const topU = t / dw;   // square aspect for lintel depth
+
     if (axis === 'x') {
         const ix = innerPos, ox = outerPos;
-        // Left side (at du0 = z)
+        // Left side (at du0 = z) — gradient rotated 180°
         builder.addQuad(
             [ix, dv0, du0], [ox, dv0, du0], [ox, dv1, du0], [ix, dv1, du0],
-            [0, 0], [t, 0], [t, dh], [0, dh], tunnelFaceId, false, tunnelFlip
+            [sideU, 1], [0, 1], [0, 0], [sideU, 0], tunnelFaceId, false, tunnelFlip, wallZone
         );
-        // Right side (at du1 = z)
+        // Right side (at du1 = z) — gradient rotated 180°
         builder.addQuad(
             [ox, dv0, du1], [ix, dv0, du1], [ix, dv1, du1], [ox, dv1, du1],
-            [0, 0], [t, 0], [t, dh], [0, dh], tunnelFaceId, false, tunnelFlip
+            [sideU, 1], [0, 1], [0, 0], [sideU, 0], tunnelFaceId, false, tunnelFlip, wallZone
         );
         // Top (lintel)
         builder.addQuad(
             [ix, dv1, du0], [ox, dv1, du0], [ox, dv1, du1], [ix, dv1, du1],
-            [0, 0], [t, 0], [t, dw], [0, dw], tunnelFaceId, false, tunnelFlip
+            [0, 0], [topU, 0], [topU, 1], [0, 1], tunnelFaceId, false, tunnelFlip, wallZone
         );
-        // Floor
+        // Floor (rotated 90°, tiled 3x)
         builder.addQuad(
             [ix, dv0, du1], [ox, dv0, du1], [ox, dv0, du0], [ix, dv0, du0],
-            [0, 0], [t, 0], [t, dw], [0, dw], tunnelFaceId, false, tunnelFlip
+            [0, 0], [0, t*3], [dw*3, t*3], [dw*3, 0], tunnelFaceId, false, tunnelFlip, floorZone
         );
     } else { // z
         const iz = innerPos, oz = outerPos;
-        // Left side (at du0 = x)
+        // Left side (at du0 = x) — gradient rotated 180°
         builder.addQuad(
             [du0, dv0, iz], [du0, dv0, oz], [du0, dv1, oz], [du0, dv1, iz],
-            [0, 0], [t, 0], [t, dh], [0, dh], tunnelFaceId, false, tunnelFlip
+            [sideU, 1], [0, 1], [0, 0], [sideU, 0], tunnelFaceId, false, tunnelFlip, wallZone
         );
-        // Right side (at du1 = x)
+        // Right side (at du1 = x) — gradient rotated 180°
         builder.addQuad(
             [du1, dv0, oz], [du1, dv0, iz], [du1, dv1, iz], [du1, dv1, oz],
-            [0, 0], [t, 0], [t, dh], [0, dh], tunnelFaceId, false, tunnelFlip
+            [sideU, 1], [0, 1], [0, 0], [sideU, 0], tunnelFaceId, false, tunnelFlip, wallZone
         );
         // Top (lintel)
         builder.addQuad(
             [du0, dv1, iz], [du0, dv1, oz], [du1, dv1, oz], [du1, dv1, iz],
-            [0, 0], [t, 0], [t, dw], [0, dw], tunnelFaceId, false, tunnelFlip
+            [0, 0], [topU, 0], [topU, 1], [0, 1], tunnelFaceId, false, tunnelFlip, wallZone
         );
-        // Floor
+        // Floor (rotated 90°, tiled 3x)
         builder.addQuad(
             [du0, dv0, oz], [du0, dv0, iz], [du1, dv0, iz], [du1, dv0, oz],
-            [0, 0], [t, 0], [t, dw], [0, dw], tunnelFaceId, false, tunnelFlip
+            [0, 0], [0, t*3], [dw*3, t*3], [dw*3, 0], tunnelFaceId, false, tunnelFlip, floorZone
         );
     }
 }
 
-function buildExitCap(builder, axis, side, outerPos, du0, du1, dv0, dv1, faceId, hl) {
+function buildExitCap(builder, axis, side, outerPos, du0, du1, dv0, dv1, faceId, hl, zone = 0) {
     const dw = du1 - du0, dh = dv1 - dv0;
 
     // Exit cap faces outward from tunnel, independent of volume invertNormals.
@@ -344,12 +484,12 @@ function buildExitCap(builder, axis, side, outerPos, du0, du1, dv0, dv1, faceId,
     if (axis === 'x') {
         builder.addQuad(
             [outerPos, dv0, du0], [outerPos, dv0, du1], [outerPos, dv1, du1], [outerPos, dv1, du0],
-            [0, 0], [dw, 0], [dw, dh], [0, dh], faceId, hl, exitFlip
+            [0, 0], [dw, 0], [dw, dh], [0, dh], faceId, hl, exitFlip, zone
         );
     } else {
         builder.addQuad(
             [du0, dv0, outerPos], [du1, dv0, outerPos], [du1, dv1, outerPos], [du0, dv1, outerPos],
-            [0, 0], [dw, 0], [dw, dh], [0, dh], faceId, hl, exitFlip
+            [0, 0], [dw, 0], [dw, dh], [0, dh], faceId, hl, exitFlip, zone
         );
     }
 }
