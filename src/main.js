@@ -189,7 +189,7 @@ document.addEventListener('mousedown', (e) => {
 
     if (state.tool === 'extrude') {
         // Don't select tunnel faces
-        if (hit.bounds.u0 === 0 && hit.bounds.u1 === 0) return;
+        if (hit.bounds.u0 === 0 && hit.bounds.u1 === 0 && hit.bounds.v0 === 0 && hit.bounds.v1 === 0) return;
 
         if (!e.shiftKey) {
             clearExtrudeState();
@@ -198,7 +198,7 @@ document.addEventListener('mousedown', (e) => {
         return;
     }
 
-    if (state.tool === 'door' && hit.bounds.u0 !== 0 && hit.bounds.u1 !== 0) {
+    if (state.tool === 'door' && !(hit.bounds.u0 === 0 && hit.bounds.u1 === 0 && hit.bounds.v0 === 0 && hit.bounds.v1 === 0)) {
         // Door tool — place door on the face
         placeDoorOnFace(hit.volumeId, hit.axis, hit.side, hit.point, showMessage, rebuildVolume);
     } else {
