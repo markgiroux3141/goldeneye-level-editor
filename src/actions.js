@@ -97,6 +97,7 @@ function extrudeFromFace(face, parentVol, showMessage, rebuildCallback, rebuildA
     }
 
     const newVol = new Volume(state.nextVolumeId++, nx, ny, nz, nw, nh, nd);
+    newVol.textureScheme = parentVol.textureScheme;
 
     if (!canPlaceVolume(state.volumes, newVol)) {
         state.undoStack.pop();
@@ -465,6 +466,7 @@ export function executeExtrude(showMessage, rebuildAllCallback) {
 
         const newVol = new Volume(0, nx, ny, nz, nw, nh, nd);
         newVol.invertNormals = true; // protrusions have outward-facing normals
+        newVol.textureScheme = room.textureScheme;
         selectionData.push({ newVol, room });
     }
 

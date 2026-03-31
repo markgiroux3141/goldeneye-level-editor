@@ -1,6 +1,7 @@
 // Procedural textures and materials
 
 import * as THREE from 'three';
+import { TEXTURE_SCHEMES } from './textureSchemes.js';
 
 function createCanvasTexture(color1, color2, lineColor) {
     const size = 64;
@@ -34,8 +35,8 @@ function createCanvasTexture(color1, color2, lineColor) {
 // Shared base textures (cloned per material instance)
 let wallTex, floorTex, ceilingTex, highlightTex;
 
-// Real textures loaded from BMP files
-let brownWallTex, greyTileFloorTex, whiteTileTex, stairGradientTex, floorDoorframeTex;
+// Loaded BMP textures keyed by name (without path/extension)
+const textureMap = new Map();
 
 export function initMaterials() {
     wallTex = createCanvasTexture('#808080', '#777777', '#666666');
@@ -43,21 +44,24 @@ export function initMaterials() {
     ceilingTex = createCanvasTexture('#909090', '#888888', '#777777');
     highlightTex = createCanvasTexture('#44aa44', '#55bb55', '#33aa33');
 
-    // Load real textures for textured mode
+    // Collect all unique texture names from all schemes
+    const textureNames = new Set();
+    for (const scheme of Object.values(TEXTURE_SCHEMES)) {
+        for (const zone of Object.values(scheme.zones)) {
+            if (zone.texture) textureNames.add(zone.texture);
+        }
+    }
+
+    // Load all textures
     const loader = new THREE.TextureLoader();
-    const configTex = (tex) => {
+    for (const name of textureNames) {
+        const tex = loader.load(`public/textures/${name}.bmp`);
         tex.wrapS = THREE.RepeatWrapping;
         tex.wrapT = THREE.RepeatWrapping;
         tex.magFilter = THREE.NearestFilter;
         tex.minFilter = THREE.NearestMipMapLinearFilter;
-        return tex;
-    };
-
-    brownWallTex = configTex(loader.load('public/textures/brown_wall.bmp'));
-    greyTileFloorTex = configTex(loader.load('public/textures/grey_tile_floor.bmp'));
-    whiteTileTex = configTex(loader.load('public/textures/white_tile.bmp'));
-    stairGradientTex = configTex(loader.load('public/textures/stair_gradient.bmp'));
-    floorDoorframeTex = configTex(loader.load('public/textures/floor_doorframe.bmp'));
+        textureMap.set(name, tex);
+    }
 }
 
 export function getWallMaterial() {
@@ -89,37 +93,42 @@ export function getDoorExitMaterial() {
     return new THREE.MeshLambertMaterial({ color: 0x556655, side: THREE.FrontSide });
 }
 
-// Returns array of materials for textured mode, indexed by zone:
-//   0 = floor (grey_tile_floor)
-//   1 = ceiling (brown_wall)
-//   2 = lower wall (white_tile)
-//   3 = upper wall (brown_wall)
-//   4 = tunnel/door frame (unused, kept for index stability)
-//   5 = tunnel sides + top (stair_gradient)
-//   6 = tunnel floor (floor_doorframe)
-export function getTexturedMaterialArray() {
-    const makemat = (tex, repeatScale) => {
-        const t = tex.clone();
-        t.repeat.set(repeatScale, repeatScale);
+// Build material array for a specific texture scheme.
+// Returns array of 7 materials indexed by zone (0-6).
+export function getTexturedMaterialArrayForScheme(schemeName) {
+    const scheme = TEXTURE_SCHEMES[schemeName] || TEXTURE_SCHEMES.facility_white_tile;
+
+    return Object.keys(scheme.zones).sort((a, b) => a - b).map(zoneIdx => {
+        const zone = scheme.zones[zoneIdx];
+        if (zone.texture === null) {
+            return new THREE.MeshLambertMaterial({
+                color: zone.color,
+                side: THREE.FrontSide,
+                vertexColors: true,
+            });
+        }
+        const baseTex = textureMap.get(zone.texture);
+        if (!baseTex) {
+            return new THREE.MeshLambertMaterial({
+                color: 0xff00ff, // magenta = missing texture
+                side: THREE.FrontSide,
+                vertexColors: true,
+            });
+        }
+        const t = baseTex.clone();
+        t.repeat.set(zone.repeat, zone.repeat);
+        if (zone.offsetX || zone.offsetY) t.offset.set(zone.offsetX || 0, zone.offsetY || 0);
+        if (zone.rotation) t.rotation = zone.rotation * (Math.PI / 180); // degrees to radians
         t.needsUpdate = true;
         return new THREE.MeshLambertMaterial({
             map: t,
             side: THREE.FrontSide,
             vertexColors: true,
         });
-    };
+    });
+}
 
-    return [
-        makemat(greyTileFloorTex, 0.35),   // zone 0: floor — slightly smaller tiles
-        makemat(brownWallTex, 0.10),        // zone 1: ceiling — large scale
-        makemat(whiteTileTex, 0.80),        // zone 2: lower wall — small individual tiles
-        makemat(brownWallTex, 0.10),        // zone 3: upper wall — large scale
-        new THREE.MeshLambertMaterial({     // zone 4: tunnel (legacy fallback)
-            color: 0x8B7355,
-            side: THREE.FrontSide,
-            vertexColors: true,
-        }),
-        makemat(stairGradientTex, 1.0),     // zone 5: tunnel sides + top (UVs handle stretching)
-        makemat(floorDoorframeTex, 0.35),   // zone 6: tunnel floor
-    ];
+// Convenience alias for default scheme
+export function getTexturedMaterialArray() {
+    return getTexturedMaterialArrayForScheme('facility_white_tile');
 }

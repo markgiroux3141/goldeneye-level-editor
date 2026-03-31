@@ -222,8 +222,9 @@ function buildSolidFace(builder, vol, axis, side, selectedFace, flip = false, op
 
     if (isWall && textured && splitV !== undefined && v0 < splitV && splitV < v1) {
         // Split into lower and upper quads
+        // UVs use absolute V from wall bottom so textures stay seamless when both zones use the same texture
         const lowerH = splitV - v0;
-        const upperH = v1 - splitV;
+        const totalH = v1 - v0;
         const uW = u1 - u0;
 
         if (axis === 'x') {
@@ -233,7 +234,7 @@ function buildSolidFace(builder, vol, axis, side, selectedFace, flip = false, op
             );
             builder.addQuad(
                 [pos, splitV, u0], [pos, splitV, u1], [pos, v1, u1], [pos, v1, u0],
-                [0, 0], [uW, 0], [uW, upperH], [0, upperH], faceId, hl, effectiveFlip, 3
+                [0, lowerH], [uW, lowerH], [uW, totalH], [0, totalH], faceId, hl, effectiveFlip, 3
             );
         } else { // z
             builder.addQuad(
@@ -242,7 +243,7 @@ function buildSolidFace(builder, vol, axis, side, selectedFace, flip = false, op
             );
             builder.addQuad(
                 [u0, splitV, pos], [u1, splitV, pos], [u1, v1, pos], [u0, v1, pos],
-                [0, 0], [uW, 0], [uW, upperH], [0, upperH], faceId, hl, effectiveFlip, 3
+                [0, lowerH], [uW, lowerH], [uW, totalH], [0, totalH], faceId, hl, effectiveFlip, 3
             );
         }
         return;
@@ -355,15 +356,17 @@ function buildWallWithMultipleHoles(builder, axis, pos, side, ru0, ru1, rv0, rv1
     const addSingleQ = (u0, u1, v0, v1, zone) => {
         const uW = u1 - u0, vH = v1 - v0;
         if (uW <= 0 || vH <= 0) return;
+        // Use absolute V offset from wall bottom so split textures stay seamless
+        const vOff = v0 - rv0;
         if (axis === 'x') {
             builder.addQuad(
                 [pos, v0, u0], [pos, v0, u1], [pos, v1, u1], [pos, v1, u0],
-                [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip, zone
+                [0, vOff], [uW, vOff], [uW, vOff + vH], [0, vOff + vH], faceId, hl, effectiveFlip, zone
             );
         } else {
             builder.addQuad(
                 [u0, v0, pos], [u1, v0, pos], [u1, v1, pos], [u0, v1, pos],
-                [0, 0], [uW, 0], [uW, vH], [0, vH], faceId, hl, effectiveFlip, zone
+                [0, vOff], [uW, vOff], [uW, vOff + vH], [0, vOff + vH], faceId, hl, effectiveFlip, zone
             );
         }
     };

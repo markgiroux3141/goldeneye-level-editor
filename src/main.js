@@ -6,7 +6,8 @@ import { initInput, initKeyActions, onKeyDown, isPointerLocked } from './input.j
 import { updateCamera } from './camera.js';
 import { Volume, WORLD_SCALE } from './core/Volume.js';
 import { state, deserializeLevel } from './state.js';
-import { initMaterials, getWallMaterial, getTexturedMaterialArray } from './materials.js';
+import { initMaterials, getWallMaterial, getTexturedMaterialArray, getTexturedMaterialArrayForScheme } from './materials.js';
+import { TEXTURE_SCHEMES, getSchemeByKey, loadTextureSchemes } from './textureSchemes.js';
 import { buildVolumeGeometry } from './geometry.js';
 import { getConnectionsForFace, computeDoorPlacement } from './core/Connection.js';
 import { pickFace } from './raycaster.js';
@@ -26,7 +27,6 @@ import { buildStaircaseGeometry, buildStaircasePreviewLines } from './staircaseG
 // INIT
 // ============================================================
 initScene();
-initMaterials();
 initInput(renderer.domElement);
 initKeyActions();
 initHUD();
@@ -77,7 +77,7 @@ function rebuildVolume(vol) {
 
     let material;
     if (state.viewMode === 'textured') {
-        material = getTexturedMaterialArray();
+        material = getTexturedMaterialArrayForScheme(vol.textureScheme);
     } else {
         material = getWallMaterial();
         material.vertexColors = true;
@@ -307,6 +307,21 @@ onKeyDown((e) => {
         return;
     }
 
+    // Number keys: set texture scheme on selected volume
+    if (e.key >= '1' && e.key <= '9' && isPointerLocked() && state.selectedFace) {
+        const schemeName = getSchemeByKey(e.key);
+        if (schemeName) {
+            e.preventDefault();
+            const vol = state.volumes.find(v => v.id === state.selectedFace.volumeId);
+            if (vol) {
+                vol.textureScheme = schemeName;
+                rebuildVolume(vol);
+                showMessage('Scheme: ' + TEXTURE_SCHEMES[schemeName].label);
+            }
+            return;
+        }
+    }
+
     if (e.code === 'KeyT' && isPointerLocked()) {
         e.preventDefault();
         cycleToolForward();
@@ -354,23 +369,30 @@ onKeyDown((e) => {
 });
 
 // ============================================================
-// INIT — start with one volume
+// INIT — load schemes, then start
 // ============================================================
-const firstVolume = new Volume(state.nextVolumeId++, 0, 0, 0, 16, 12, 16);
-state.volumes.push(firstVolume);
-rebuildVolume(firstVolume);
+(async () => {
+    await loadTextureSchemes();
+    initMaterials();
 
-// Try loading saved level
-try {
-    const saved = loadFromLocalStorage();
-    if (saved) {
-        const data = JSON.parse(saved);
-        if (data.volumes && data.volumes.length > 0) {
-            deserializeLevel(saved);
-            rebuildAll();
+    const firstVolume = new Volume(state.nextVolumeId++, 0, 0, 0, 16, 12, 16);
+    state.volumes.push(firstVolume);
+    rebuildVolume(firstVolume);
+
+    // Try loading saved level
+    try {
+        const saved = loadFromLocalStorage();
+        if (saved) {
+            const data = JSON.parse(saved);
+            if (data.volumes && data.volumes.length > 0) {
+                deserializeLevel(saved);
+                rebuildAll();
+            }
         }
-    }
-} catch (e) { /* ignore */ }
+    } catch (e) { /* ignore */ }
+
+    animate();
+})();
 
 // ============================================================
 // DOOR PREVIEW
@@ -574,5 +596,3 @@ function animate() {
     updateHUD(camera);
     renderer.render(scene, camera);
 }
-
-animate();

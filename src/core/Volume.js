@@ -10,6 +10,7 @@ export class Volume {
         this.x = x; this.y = y; this.z = z;  // min corner of interior
         this.w = w; this.h = h; this.d = d;   // interior dimensions (integers >= 1)
         this.invertNormals = false;            // true for protrusions (normals point outward)
+        this.textureScheme = 'facility_white_tile'; // texture scheme name
     }
 
     get outerMinX() { return this.x - WALL_THICKNESS; }
@@ -29,18 +30,21 @@ export class Volume {
     clone() {
         const v = new Volume(this.id, this.x, this.y, this.z, this.w, this.h, this.d);
         v.invertNormals = this.invertNormals;
+        v.textureScheme = this.textureScheme;
         return v;
     }
 
     toJSON() {
         const j = { id: this.id, x: this.x, y: this.y, z: this.z, w: this.w, h: this.h, d: this.d };
         if (this.invertNormals) j.invertNormals = true;
+        if (this.textureScheme !== 'facility_white_tile') j.textureScheme = this.textureScheme;
         return j;
     }
 
     static fromJSON(j) {
         const v = new Volume(j.id, j.x, j.y, j.z, j.w, j.h, j.d);
         if (j.invertNormals) v.invertNormals = true;
+        if (j.textureScheme) v.textureScheme = j.textureScheme;
         return v;
     }
 }

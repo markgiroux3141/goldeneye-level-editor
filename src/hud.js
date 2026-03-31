@@ -2,6 +2,7 @@
 
 import { state } from './state.js';
 import { on } from './systems/EventBus.js';
+import { TEXTURE_SCHEMES } from './textureSchemes.js';
 
 const statusEl = document.getElementById('status');
 const toolInfoEl = document.getElementById('tool-info');
@@ -85,9 +86,12 @@ export function updateHUD(camera) {
         if (vol) {
             const bw = f.bounds.u1 - f.bounds.u0;
             const bh = f.bounds.v1 - f.bounds.v0;
+            const scheme = TEXTURE_SCHEMES[vol.textureScheme];
+            const schemeName = scheme ? scheme.label : vol.textureScheme;
             lines.push(`Vol ${vol.id} | ${f.axis}-${f.side} @ ${f.position}`);
             lines.push(`Face: ${bw} x ${bh}`);
             lines.push(`Volume: ${vol.w} x ${vol.h} x ${vol.d}`);
+            lines.push(`Scheme: ${schemeName}`);
         }
     }
 
