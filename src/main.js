@@ -125,10 +125,20 @@ function rebuildStaircase(stair) {
         old.geometry.dispose();
     }
 
-    const geometry = buildStaircaseGeometry(stair);
-    const material = getWallMaterial();
-    material.vertexColors = true;
-    material.map.repeat.set(1, 1);
+    const options = {};
+    if (state.viewMode === 'textured') {
+        options.viewMode = 'textured';
+    }
+    const geometry = buildStaircaseGeometry(stair, options);
+
+    let material;
+    if (state.viewMode === 'textured') {
+        material = getTexturedMaterialArray();
+    } else {
+        material = getWallMaterial();
+        material.vertexColors = true;
+        material.map.repeat.set(1, 1);
+    }
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData = { staircaseId: stair.id };
 
@@ -293,6 +303,7 @@ onKeyDown((e) => {
         state.viewMode = state.viewMode === 'grid' ? 'textured' : 'grid';
         showMessage('View: ' + (state.viewMode === 'grid' ? 'Grid' : 'Textured'));
         rebuildAllVolumes();
+        rebuildAllStaircases();
         return;
     }
 

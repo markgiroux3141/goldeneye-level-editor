@@ -17,10 +17,12 @@ class StairGeometryBuilder {
         this.uvs = [];
         this.colors = [];
         this.indices = [];
+        this.zones = [];
         this.vertexCount = 0;
+        this.quadCount = 0;
     }
 
-    addQuad(p0, p1, p2, p3, flip = false) {
+    addQuad(p0, p1, p2, p3, flip = false, zone = 0, uv0, uv1, uv2, uv3) {
         const base = this.vertexCount;
         const [vp1, vp3] = flip ? [p3, p1] : [p1, p3];
 
@@ -28,7 +30,18 @@ class StairGeometryBuilder {
             p0[0]*S, p0[1]*S, p0[2]*S, vp1[0]*S, vp1[1]*S, vp1[2]*S,
             p2[0]*S, p2[1]*S, p2[2]*S, vp3[0]*S, vp3[1]*S, vp3[2]*S,
         );
-        this.uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
+
+        // UVs: use provided or default [0,0],[1,0],[1,1],[0,1]
+        if (uv0 !== undefined) {
+            const [vuv1, vuv3] = flip ? [uv3, uv1] : [uv1, uv3];
+            this.uvs.push(uv0[0], uv0[1], vuv1[0], vuv1[1], uv2[0], uv2[1], vuv3[0], vuv3[1]);
+        } else {
+            if (flip) {
+                this.uvs.push(0, 0, 0, 1, 1, 1, 1, 0);
+            } else {
+                this.uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
+            }
+        }
 
         const e1x = vp1[0] - p0[0], e1y = vp1[1] - p0[1], e1z = vp1[2] - p0[2];
         const e2x = p2[0] - p0[0], e2y = p2[1] - p0[1], e2z = p2[2] - p0[2];
@@ -41,7 +54,9 @@ class StairGeometryBuilder {
         for (let i = 0; i < 4; i++) this.colors.push(1.0, 1.0, 1.0);
 
         this.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        this.zones.push(zone);
         this.vertexCount += 4;
+        this.quadCount++;
     }
 
     build() {
@@ -50,7 +65,43 @@ class StairGeometryBuilder {
         geo.setAttribute('normal', new THREE.Float32BufferAttribute(this.normals, 3));
         geo.setAttribute('uv', new THREE.Float32BufferAttribute(this.uvs, 2));
         geo.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 3));
-        geo.setIndex(this.indices);
+
+        const uniqueZones = new Set(this.zones);
+        if (uniqueZones.size <= 1) {
+            geo.setIndex(this.indices);
+            if (uniqueZones.size === 1) {
+                geo.addGroup(0, this.indices.length, this.zones[0]);
+            }
+            return geo;
+        }
+
+        // Multiple zones — reorder indices by zone and emit groups
+        const quads = this.zones.map((z, i) => ({ idx: i, zone: z }));
+        quads.sort((a, b) => a.zone - b.zone);
+
+        const newIndices = [];
+        for (const q of quads) {
+            const srcIdx = q.idx * 6;
+            for (let j = 0; j < 6; j++) newIndices.push(this.indices[srcIdx + j]);
+        }
+
+        geo.setIndex(newIndices);
+
+        let groupStart = 0;
+        let currentZone = quads[0].zone;
+        let groupCount = 0;
+
+        for (const q of quads) {
+            if (q.zone !== currentZone) {
+                geo.addGroup(groupStart, groupCount, currentZone);
+                groupStart += groupCount;
+                groupCount = 0;
+                currentZone = q.zone;
+            }
+            groupCount += 6;
+        }
+        geo.addGroup(groupStart, groupCount, currentZone);
+
         return geo;
     }
 }
@@ -64,10 +115,15 @@ function toWorld(runAxis, runPos, y, perpPos) {
     return [perpPos, y, runPos];
 }
 
+// Stair texture zones (matching volume material array indices):
+//   0 = grey_tile_floor (treads)
+//   3 = brown_wall (sides, bottom, back, front)
+//   5 = stair_gradient (risers) — dark at top
+
 // ============================================================
 // SINGLE STAIR RUN (between two points)
 // ============================================================
-function buildStairRun(builder, topPt, bottomPt, steps, runAxis, runSign, width, side, floorY) {
+function buildStairRun(builder, topPt, bottomPt, steps, runAxis, runSign, width, side, floorY, options) {
     if (steps === 0) return;
 
     const topRun = runAxis === 'x' ? topPt.x : topPt.z;
@@ -83,78 +139,98 @@ function buildStairRun(builder, topPt, bottomPt, steps, runAxis, runSign, width,
 
     const xorFlip = (runAxis === 'x') !== (stepRun < 0);
 
+    const textured = options.viewMode === 'textured';
+    const treadZone = textured ? 0 : 0;
+    const riserZone = textured ? 5 : 0;
+    const sideZone = textured ? 3 : 0;
+    const stepWidth = perpMax - perpMin;
+
     for (let i = 0; i < N; i++) {
         const rFront = topRun + (N - i) * stepRun;
         const rBack = topRun + (N - i - 1) * stepRun;
         const stepTopY = segBottomY + (i + 1) * stepRise;
         const stepBotY = segBottomY + i * stepRise;
+        const absStepRun = Math.abs(stepRun);
+        const sideH = stepTopY - floorY;
 
-        // Tread (+Y)
+        // Tread (+Y) — grey tile floor (UVs = WT dimensions, material repeat handles scale)
         builder.addQuad(
             toWorld(runAxis, rBack, stepTopY, perpMin),
             toWorld(runAxis, rFront, stepTopY, perpMin),
             toWorld(runAxis, rFront, stepTopY, perpMax),
             toWorld(runAxis, rBack, stepTopY, perpMax),
-            xorFlip,
+            xorFlip, treadZone,
+            ...(textured ? [[0, 0], [absStepRun, 0], [absStepRun, stepWidth], [0, stepWidth]] : []),
         );
 
-        // Riser (faces toward bottom end)
+        // Riser (faces toward bottom end) — gradient, dark at top
+        // UV: V=0 at bottom (stepBotY), V=1 at top (stepTopY) — flipped
+        const riserU = stepWidth / stepRise; // keep square aspect
         builder.addQuad(
             toWorld(runAxis, rFront, stepBotY, perpMin),
             toWorld(runAxis, rFront, stepBotY, perpMax),
             toWorld(runAxis, rFront, stepTopY, perpMax),
             toWorld(runAxis, rFront, stepTopY, perpMin),
-            xorFlip,
+            xorFlip, riserZone,
+            ...(textured ? [[0, 0], [riserU, 0], [riserU, 1], [0, 1]] : []),
         );
 
-        // Left side (perpMin, faces -perp)
+        // Left side (perpMin, faces -perp) — brown wall (UVs = WT dimensions)
         builder.addQuad(
             toWorld(runAxis, rFront, floorY, perpMin),
             toWorld(runAxis, rBack, floorY, perpMin),
             toWorld(runAxis, rBack, stepTopY, perpMin),
             toWorld(runAxis, rFront, stepTopY, perpMin),
-            !xorFlip,
+            !xorFlip, sideZone,
+            ...(textured ? [[0, 0], [absStepRun, 0], [absStepRun, sideH], [0, sideH]] : []),
         );
 
-        // Right side (perpMax, faces +perp)
+        // Right side (perpMax, faces +perp) — brown wall (UVs = WT dimensions)
         builder.addQuad(
             toWorld(runAxis, rBack, floorY, perpMax),
             toWorld(runAxis, rFront, floorY, perpMax),
             toWorld(runAxis, rFront, stepTopY, perpMax),
             toWorld(runAxis, rBack, stepTopY, perpMax),
-            !xorFlip,
+            !xorFlip, sideZone,
+            ...(textured ? [[0, 0], [absStepRun, 0], [absStepRun, sideH], [0, sideH]] : []),
         );
     }
 
-    // Bottom face (-Y)
+    // Bottom face (-Y) — brown wall (UVs = WT dimensions)
     const runMin = Math.min(topRun, topRun + N * stepRun);
     const runMax = Math.max(topRun, topRun + N * stepRun);
+    const runLen = runMax - runMin;
     builder.addQuad(
         toWorld(runAxis, runMin, floorY, perpMin),
         toWorld(runAxis, runMax, floorY, perpMin),
         toWorld(runAxis, runMax, floorY, perpMax),
         toWorld(runAxis, runMin, floorY, perpMax),
-        runAxis === 'z',
+        runAxis === 'z', sideZone,
+        ...(textured ? [[0, 0], [runLen, 0], [runLen, stepWidth], [0, stepWidth]] : []),
     );
 
-    // Back face (at topRun, faces toward top end)
+    // Back face (at topRun, faces toward top end) — brown wall (UVs = WT dimensions)
+    const backH = topPt.y - floorY;
     builder.addQuad(
         toWorld(runAxis, topRun, floorY, perpMin),
         toWorld(runAxis, topRun, floorY, perpMax),
         toWorld(runAxis, topRun, topPt.y, perpMax),
         toWorld(runAxis, topRun, topPt.y, perpMin),
-        !xorFlip,
+        !xorFlip, sideZone,
+        ...(textured ? [[0, 0], [stepWidth, 0], [stepWidth, backH], [0, backH]] : []),
     );
 
-    // Front face (at bottomRun, faces toward bottom end)
+    // Front face (at bottomRun, faces toward bottom end) — brown wall (UVs = WT dimensions)
     if (floorY < segBottomY) {
         const frontRun = topRun + N * stepRun;
+        const frontH = segBottomY - floorY;
         builder.addQuad(
             toWorld(runAxis, frontRun, floorY, perpMax),
             toWorld(runAxis, frontRun, floorY, perpMin),
             toWorld(runAxis, frontRun, segBottomY, perpMin),
             toWorld(runAxis, frontRun, segBottomY, perpMax),
-            !xorFlip,
+            !xorFlip, sideZone,
+            ...(textured ? [[0, 0], [stepWidth, 0], [stepWidth, frontH], [0, frontH]] : []),
         );
     }
 }
@@ -162,7 +238,7 @@ function buildStairRun(builder, topPt, bottomPt, steps, runAxis, runSign, width,
 // ============================================================
 // FLAT WALKWAY (between two points at same Y)
 // ============================================================
-function buildFlatWalkway(builder, ptA, ptB, runAxis, runSign, width, side, floorY) {
+function buildFlatWalkway(builder, ptA, ptB, runAxis, runSign, width, side, floorY, options) {
     const y = ptA.y;
     const { perpMin, perpMax } = getSegmentWidthExtent(ptA, runAxis, runSign, width, side);
 
@@ -173,65 +249,78 @@ function buildFlatWalkway(builder, ptA, ptB, runAxis, runSign, width, side, floo
 
     if (runMin === runMax) return;
 
-    // Top face (+Y)
+    const textured = options.viewMode === 'textured';
+    const treadZone = textured ? 0 : 0;
+    const sideZone = textured ? 3 : 0;
+    const runLen = runMax - runMin;
+    const ww = perpMax - perpMin;
+    const h = y - floorY;
+
+    // Top face (+Y) — grey tile floor (UVs = WT dimensions)
     builder.addQuad(
         toWorld(runAxis, runMin, y, perpMin),
         toWorld(runAxis, runMin, y, perpMax),
         toWorld(runAxis, runMax, y, perpMax),
         toWorld(runAxis, runMax, y, perpMin),
-        runAxis === 'z',
+        runAxis === 'z', treadZone,
+        ...(textured ? [[0, 0], [0, ww], [runLen, ww], [runLen, 0]] : []),
     );
 
-    // Bottom face (-Y)
+    // Bottom face (-Y) — brown wall (UVs = WT dimensions)
     builder.addQuad(
         toWorld(runAxis, runMin, floorY, perpMin),
         toWorld(runAxis, runMax, floorY, perpMin),
         toWorld(runAxis, runMax, floorY, perpMax),
         toWorld(runAxis, runMin, floorY, perpMax),
-        runAxis === 'z',
+        runAxis === 'z', sideZone,
+        ...(textured ? [[0, 0], [runLen, 0], [runLen, ww], [0, ww]] : []),
     );
 
-    // Front side (runMin end)
+    // Front side (runMin end) — brown wall (UVs = WT dimensions)
     builder.addQuad(
         toWorld(runAxis, runMin, floorY, perpMin),
         toWorld(runAxis, runMin, floorY, perpMax),
         toWorld(runAxis, runMin, y, perpMax),
         toWorld(runAxis, runMin, y, perpMin),
-        runAxis === 'z',
+        runAxis === 'z', sideZone,
+        ...(textured ? [[0, 0], [ww, 0], [ww, h], [0, h]] : []),
     );
 
-    // Back side (runMax end)
+    // Back side (runMax end) — brown wall (UVs = WT dimensions)
     builder.addQuad(
         toWorld(runAxis, runMax, floorY, perpMax),
         toWorld(runAxis, runMax, floorY, perpMin),
         toWorld(runAxis, runMax, y, perpMin),
         toWorld(runAxis, runMax, y, perpMax),
-        runAxis === 'z',
+        runAxis === 'z', sideZone,
+        ...(textured ? [[0, 0], [ww, 0], [ww, h], [0, h]] : []),
     );
 
-    // Left side (perpMin)
+    // Left side (perpMin) — brown wall (UVs = WT dimensions)
     builder.addQuad(
         toWorld(runAxis, runMax, floorY, perpMin),
         toWorld(runAxis, runMin, floorY, perpMin),
         toWorld(runAxis, runMin, y, perpMin),
         toWorld(runAxis, runMax, y, perpMin),
-        runAxis === 'z',
+        runAxis === 'z', sideZone,
+        ...(textured ? [[0, 0], [runLen, 0], [runLen, h], [0, h]] : []),
     );
 
-    // Right side (perpMax)
+    // Right side (perpMax) — brown wall (UVs = WT dimensions)
     builder.addQuad(
         toWorld(runAxis, runMin, floorY, perpMax),
         toWorld(runAxis, runMax, floorY, perpMax),
         toWorld(runAxis, runMax, y, perpMax),
         toWorld(runAxis, runMin, y, perpMax),
-        runAxis === 'z',
+        runAxis === 'z', sideZone,
+        ...(textured ? [[0, 0], [runLen, 0], [runLen, h], [0, h]] : []),
     );
 }
 
 // ============================================================
 // LANDING PLATFORM (at an intermediate waypoint)
 // ============================================================
-function buildLanding(builder, wp, inRunAxis, inRunSign, outRunAxis, outRunSign, width, side, floorY) {
+function buildLanding(builder, wp, inRunAxis, inRunSign, outRunAxis, outRunSign, width, side, floorY, options) {
     const y = wp.y;
 
     const inExt = getSegmentWidthExtent(wp, inRunAxis, inRunSign, width, side);
@@ -258,51 +347,65 @@ function buildLanding(builder, wp, inRunAxis, inRunSign, outRunAxis, outRunSign,
 
     const yBot = floorY;
 
-    // Top face (+Y)
+    const textured = options.viewMode === 'textured';
+    const treadZone = textured ? 0 : 0;
+    const sideZone = textured ? 3 : 0;
+    const lx = xMax - xMin, lz = zMax - zMin;
+    const h = y - yBot;
+
+    // Top face (+Y) — grey tile floor (UVs = WT dimensions)
     builder.addQuad(
         [xMin, y, zMin], [xMin, y, zMax],
         [xMax, y, zMax], [xMax, y, zMin],
+        false, treadZone,
+        ...(textured ? [[0, 0], [0, lz], [lx, lz], [lx, 0]] : []),
     );
 
-    // Bottom face (-Y)
+    // Bottom face (-Y) — brown wall (UVs = WT dimensions)
     builder.addQuad(
         [xMin, yBot, zMin], [xMax, yBot, zMin],
         [xMax, yBot, zMax], [xMin, yBot, zMax],
+        false, sideZone,
+        ...(textured ? [[0, 0], [lx, 0], [lx, lz], [0, lz]] : []),
     );
 
-    // Front (-Z)
+    // Front (-Z) — brown wall (UVs = WT dimensions)
     builder.addQuad(
         [xMin, yBot, zMin], [xMax, yBot, zMin],
         [xMax, y, zMin], [xMin, y, zMin],
-        true,
+        true, sideZone,
+        ...(textured ? [[0, 0], [lx, 0], [lx, h], [0, h]] : []),
     );
 
-    // Back (+Z)
+    // Back (+Z) — brown wall (UVs = WT dimensions)
     builder.addQuad(
         [xMax, yBot, zMax], [xMin, yBot, zMax],
         [xMin, y, zMax], [xMax, y, zMax],
-        true,
+        true, sideZone,
+        ...(textured ? [[0, 0], [lx, 0], [lx, h], [0, h]] : []),
     );
 
-    // Left (-X)
+    // Left (-X) — brown wall (UVs = WT dimensions)
     builder.addQuad(
         [xMin, yBot, zMax], [xMin, yBot, zMin],
         [xMin, y, zMin], [xMin, y, zMax],
-        true,
+        true, sideZone,
+        ...(textured ? [[0, 0], [lz, 0], [lz, h], [0, h]] : []),
     );
 
-    // Right (+X)
+    // Right (+X) — brown wall (UVs = WT dimensions)
     builder.addQuad(
         [xMax, yBot, zMin], [xMax, yBot, zMax],
         [xMax, y, zMax], [xMax, y, zMin],
-        true,
+        true, sideZone,
+        ...(textured ? [[0, 0], [lz, 0], [lz, h], [0, h]] : []),
     );
 }
 
 // ============================================================
 // FULL STAIRCASE (all segments + landings)
 // ============================================================
-export function buildStaircaseGeometry(stair) {
+export function buildStaircaseGeometry(stair, options = {}) {
     const builder = new StairGeometryBuilder();
     const wps = stair.waypoints;
 
@@ -353,14 +456,14 @@ export function buildStaircaseGeometry(stair) {
         }
 
         if (seg.isFlat) {
-            buildFlatWalkway(builder, wps[s], wps[s + 1], seg.runAxis, seg.runSign, stair.width, stair.side, floorY);
+            buildFlatWalkway(builder, wps[s], wps[s + 1], seg.runAxis, seg.runSign, stair.width, stair.side, floorY, options);
         } else {
             const split = splitSegment(seg, stair.riseOverRun, adjustedTopPt, adjustedBottomPt);
             if (split.hasFlatPortion) {
-                buildFlatWalkway(builder, split.flatTopPt, split.flatBottomPt, seg.runAxis, seg.runSign, stair.width, stair.side, floorY);
-                buildStairRun(builder, split.stairTopPt, split.stairBottomPt, seg.steps, seg.runAxis, seg.runSign, stair.width, stair.side, floorY);
+                buildFlatWalkway(builder, split.flatTopPt, split.flatBottomPt, seg.runAxis, seg.runSign, stair.width, stair.side, floorY, options);
+                buildStairRun(builder, split.stairTopPt, split.stairBottomPt, seg.steps, seg.runAxis, seg.runSign, stair.width, stair.side, floorY, options);
             } else {
-                buildStairRun(builder, adjustedTopPt, adjustedBottomPt, seg.steps, seg.runAxis, seg.runSign, stair.width, stair.side, floorY);
+                buildStairRun(builder, adjustedTopPt, adjustedBottomPt, seg.steps, seg.runAxis, seg.runSign, stair.width, stair.side, floorY, options);
             }
         }
     }
@@ -373,7 +476,7 @@ export function buildStaircaseGeometry(stair) {
         buildLanding(builder, wps[i],
             segBefore.runAxis, segBefore.runSign,
             segAfter.runAxis, segAfter.runSign,
-            stair.width, stair.side, floorY);
+            stair.width, stair.side, floorY, options);
     }
 
     return builder.build();
