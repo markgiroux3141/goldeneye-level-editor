@@ -1,7 +1,6 @@
 // Editor actions: push/pull, door cutting, save/load
 
 import { Volume, WALL_THICKNESS, WORLD_SCALE } from './core/Volume.js';
-import { Staircase } from './core/Staircase.js';
 import { state, saveUndoState, undo, serializeLevel, deserializeLevel } from './state.js';
 import { canExtendVolume, canPlaceVolume, applyPush, applyPull } from './collision.js';
 import { computeDoorPlacement, connectionExistsAt, createConnection } from './core/Connection.js';
@@ -596,47 +595,5 @@ export function snapToWTGrid(hitPoint) {
     };
 }
 
-/** Place a staircase from an array of waypoints. */
-export function placeStaircase(waypoints, showMessage, rebuildStaircaseCallback) {
-    if (waypoints.length < 2) {
-        showMessage('Need at least 2 waypoints');
-        return false;
-    }
 
-    // Validate each segment has horizontal distance
-    for (let i = 0; i < waypoints.length - 1; i++) {
-        const a = waypoints[i], b = waypoints[i + 1];
-        const dx = Math.abs(a.x - b.x);
-        const dz = Math.abs(a.z - b.z);
-        if (dx === 0 && dz === 0 && a.y !== b.y) {
-            showMessage(`Segment ${i + 1} needs horizontal distance`);
-            return false;
-        }
-    }
-
-    saveUndoState();
-
-    const stair = new Staircase(
-        state.nextStaircaseId++,
-        waypoints.slice(), // copy the array
-        state.stairWidth, state.stairStepHeight, state.stairSide, state.stairRiseOverRun,
-    );
-
-    state.staircases.push(stair);
-    rebuildStaircaseCallback(stair);
-
-    // Count total steps across all segments
-    let totalSteps = 0;
-    for (let i = 0; i < waypoints.length - 1; i++) {
-        const rise = Math.abs(waypoints[i].y - waypoints[i + 1].y);
-        if (rise > 0) totalSteps += Math.max(1, Math.round(rise / state.stairStepHeight));
-    }
-    showMessage(`Staircase placed (${totalSteps} steps, ${waypoints.length} waypoints)`);
-    return true;
-}
-
-export function clearStairState() {
-    state.stairPhase = 'idle';
-    state.stairWaypoints = [];
-}
 

@@ -67,7 +67,7 @@ export function showMessage(msg) {
     messageTimeout = setTimeout(() => { messageEl.style.opacity = '0'; }, 2000);
 }
 
-const TOOL_LABELS = { push_pull: 'PUSH/PULL', door: 'DOOR', extrude: 'EXTRUDE', stair: 'STAIR', platform: 'PLATFORM' };
+const TOOL_LABELS = { push_pull: 'PUSH/PULL', door: 'DOOR', extrude: 'EXTRUDE', platform: 'PLATFORM' };
 
 export function updateHUD(camera) {
     const lines = [];
@@ -104,15 +104,6 @@ export function updateHUD(camera) {
         } else if (state.platformPhase === 'connecting_src') {
             lines.push(`Slide along edge — click to place stairs`);
         }
-    } else if (state.tool === 'stair') {
-        if (state.stairPhase === 'placing') {
-            lines.push(`Waypoints: ${state.stairWaypoints.length}`);
-            lines.push(`Click to add, Enter to finalize`);
-            lines.push(`Backspace to undo last point`);
-        } else {
-            lines.push(`Click first waypoint`);
-        }
-        lines.push(`Side: ${state.stairSide.toUpperCase()} (R to toggle)`);
     } else if (state.tool === 'extrude') {
         // Extrude tool status
         if (state.extrudePhase === 'selecting') {
@@ -139,7 +130,7 @@ export function updateHUD(camera) {
         }
     }
 
-    lines.push(`Volumes: ${state.volumes.length} | Connections: ${state.connections.length} | Stairs: ${state.staircases.length} | Platforms: ${state.platforms.length}`);
+    lines.push(`Volumes: ${state.volumes.length} | Connections: ${state.connections.length} | Platforms: ${state.platforms.length} | Stair Runs: ${state.stairRuns.length}`);
     statusEl.innerHTML = lines.join('<br>');
 
     const toolName = TOOL_LABELS[state.tool] || state.tool;

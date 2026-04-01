@@ -1,5 +1,4 @@
 // Platform geometry builder — generates solid rectangular slab geometry
-// Reuses the same StairGeometryBuilder pattern from staircaseGeometry.js
 
 import * as THREE from 'three';
 import { WORLD_SCALE } from './core/Volume.js';
@@ -8,7 +7,7 @@ import { Platform } from './core/Platform.js';
 const S = WORLD_SCALE;
 
 // ============================================================
-// GEOMETRY BUILDER (shared pattern with staircase geometry)
+// GEOMETRY BUILDER
 // ============================================================
 class PlatformGeometryBuilder {
     constructor() {

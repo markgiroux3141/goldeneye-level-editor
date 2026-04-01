@@ -19,9 +19,8 @@ import {
     saveLevel, loadLevel,
     addExtrudeSelection, executeExtrude, reExtrudeVolumes,
     extrudeUntilBlocked, clearExtrudeState, computeExtrudePlacement,
-    snapToWTGrid, placeStaircase, clearStairState,
+    snapToWTGrid,
 } from './actions.js';
-import { buildStaircaseGeometry, buildStaircasePreviewLines } from './staircaseGeometry.js';
 import { Platform } from './core/Platform.js';
 import { buildPlatformGeometry, buildPlatformPreviewLines, buildEdgeHighlightLines, buildEdgeSlotLines, buildStairRunGeometry, buildStairRunPreviewLines, buildPlatformRailingGeometry, buildStairRunRailingGeometry } from './platformGeometry.js';
 import { StairRun } from './core/StairRun.js';
@@ -47,15 +46,6 @@ const extrudePreviewGroup = new THREE.Group();
 scene.add(extrudePreviewGroup);
 const extrudeSelectionMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
 const extrudeHoverMat = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
-
-// Staircase mesh storage: Map<staircaseId, THREE.Mesh>
-const staircaseMeshes = new Map();
-
-// Stair preview group
-const stairPreviewGroup = new THREE.Group();
-scene.add(stairPreviewGroup);
-const stairPreviewMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
-const stairMarkerMat = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
 
 // Platform mesh storage: Map<platformId, THREE.Mesh>
 const platformMeshes = new Map();
@@ -135,49 +125,6 @@ function removeVolumeMesh(volId) {
 // ============================================================
 // STAIRCASE MESH MANAGEMENT
 // ============================================================
-function rebuildStaircase(stair) {
-    const old = staircaseMeshes.get(stair.id);
-    if (old) {
-        scene.remove(old);
-        old.geometry.dispose();
-    }
-
-    const options = {};
-    if (state.viewMode === 'textured') {
-        options.viewMode = 'textured';
-    }
-    const geometry = buildStaircaseGeometry(stair, options);
-
-    let material;
-    if (state.viewMode === 'textured') {
-        material = getTexturedMaterialArray();
-    } else {
-        material = getWallMaterial();
-        material.vertexColors = true;
-        material.map.repeat.set(1, 1);
-    }
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.userData = { staircaseId: stair.id };
-
-    const edges = new THREE.EdgesGeometry(geometry);
-    const wireframe = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x333333 }));
-    mesh.add(wireframe);
-
-    staircaseMeshes.set(stair.id, mesh);
-    scene.add(mesh);
-}
-
-function rebuildAllStaircases() {
-    for (const [id, mesh] of staircaseMeshes) {
-        scene.remove(mesh);
-        mesh.geometry.dispose();
-    }
-    staircaseMeshes.clear();
-    for (const stair of state.staircases) {
-        rebuildStaircase(stair);
-    }
-}
-
 // ============================================================
 // PLATFORM MESH MANAGEMENT
 // ============================================================
@@ -318,10 +265,9 @@ function rebuildConnectedStairRuns(platformId) {
     }
 }
 
-// Rebuild everything (volumes + staircases + platforms + stair runs) — used for undo/load
+// Rebuild everything (volumes + platforms + stair runs) — used for undo/load
 function rebuildAll() {
     rebuildAllVolumes();
-    rebuildAllStaircases();
     rebuildAllPlatforms();
     rebuildAllStairRuns();
 }
@@ -329,8 +275,8 @@ function rebuildAll() {
 // ============================================================
 // TOOL CYCLING
 // ============================================================
-const TOOL_CYCLE = ['push_pull', 'door', 'extrude', 'stair', 'platform'];
-const TOOL_NAMES = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', stair: 'Stair', platform: 'Platform' };
+const TOOL_CYCLE = ['push_pull', 'door', 'extrude', 'platform'];
+const TOOL_NAMES = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', platform: 'Platform' };
 
 function clearPlatformToolState() {
     if (gizmo.isDragging()) gizmo.cancelDrag();
@@ -349,7 +295,6 @@ function cycleToolForward() {
     const idx = TOOL_CYCLE.indexOf(state.tool);
     state.tool = TOOL_CYCLE[(idx + 1) % TOOL_CYCLE.length];
     if (state.tool !== 'extrude') clearExtrudeState();
-    if (state.tool !== 'stair') clearStairState();
     if (state.tool !== 'platform') clearPlatformToolState();
     showMessage('Tool: ' + TOOL_NAMES[state.tool]);
 }
@@ -626,15 +571,6 @@ document.addEventListener('mousedown', (e) => {
         return;
     }
 
-    if (state.tool === 'stair') {
-        if (!hit) return; // need a surface to click on
-        const snapped = snapToWTGrid(hit.point);
-        state.stairWaypoints.push(snapped);
-        state.stairPhase = 'placing';
-        showMessage(`Waypoint ${state.stairWaypoints.length} at (${snapped.x}, ${snapped.y}, ${snapped.z})`);
-        return;
-    }
-
     if (!hit) {
         if (state.tool === 'extrude') {
             clearExtrudeState();
@@ -852,43 +788,11 @@ onKeyDown((e) => {
         }
     }
 
-    // Stair tool keys
-    if (state.tool === 'stair' && isPointerLocked()) {
-        if (e.code === 'KeyR') {
-            e.preventDefault();
-            state.stairSide = state.stairSide === 'right' ? 'left' : 'right';
-            showMessage('Stair side: ' + state.stairSide.toUpperCase());
-            return;
-        }
-        if (e.code === 'Enter' && state.stairPhase === 'placing') {
-            e.preventDefault();
-            if (state.stairWaypoints.length >= 2) {
-                placeStaircase(state.stairWaypoints, showMessage, rebuildStaircase);
-                clearStairState();
-            } else {
-                showMessage('Need at least 2 waypoints');
-            }
-            return;
-        }
-        if (e.code === 'Backspace' && state.stairPhase === 'placing') {
-            e.preventDefault();
-            state.stairWaypoints.pop();
-            if (state.stairWaypoints.length === 0) {
-                state.stairPhase = 'idle';
-                showMessage('All waypoints removed');
-            } else {
-                showMessage(`Waypoint removed (${state.stairWaypoints.length} remaining)`);
-            }
-            return;
-        }
-    }
-
     if (e.code === 'KeyV' && isPointerLocked()) {
         e.preventDefault();
         state.viewMode = state.viewMode === 'grid' ? 'textured' : 'grid';
         showMessage('View: ' + (state.viewMode === 'grid' ? 'Grid' : 'Textured'));
         rebuildAllVolumes();
-        rebuildAllStaircases();
         rebuildAllPlatforms();
         rebuildAllStairRuns();
         return;
@@ -925,7 +829,6 @@ onKeyDown((e) => {
     if (e.ctrlKey && e.code === 'KeyZ') {
         e.preventDefault();
         clearExtrudeState();
-        clearStairState();
         clearPlatformToolState();
         undoAction(showMessage, rebuildAll);
         return;
@@ -946,10 +849,6 @@ onKeyDown((e) => {
     if (e.code === 'Escape' && state.tool !== 'platform') {
         if (state.tool === 'extrude') {
             clearExtrudeState();
-        }
-        if (state.tool === 'stair') {
-            clearStairState();
-            showMessage('Stair placement cancelled');
         }
         state.selectedFace = null;
         rebuildAllVolumes();
@@ -1104,66 +1003,6 @@ function updateExtrudePreview() {
                     const geo = new THREE.BufferGeometry().setFromPoints(points);
                     extrudePreviewGroup.add(new THREE.Line(geo, extrudeHoverMat));
                 }
-            }
-        }
-    }
-}
-
-// ============================================================
-// STAIR PREVIEW
-// ============================================================
-function drawMarkerCube(cx, cy, cz, material) {
-    const s = 0.5;
-    const W = WORLD_SCALE;
-    const pts = [
-        new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
-        new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz-s)*W),
-        new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz-s)*W),
-        new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz-s)*W),
-        new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
-        new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
-        new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz+s)*W),
-        new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz+s)*W),
-        new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz+s)*W),
-        new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
-    ];
-    const geo = new THREE.BufferGeometry().setFromPoints(pts);
-    stairPreviewGroup.add(new THREE.Line(geo, material));
-}
-
-function updateStairPreview() {
-    while (stairPreviewGroup.children.length > 0) {
-        const child = stairPreviewGroup.children[0];
-        stairPreviewGroup.remove(child);
-        if (child.geometry) child.geometry.dispose();
-    }
-
-    if (state.tool !== 'stair' || !isPointerLocked()) return;
-
-    const hit = pickFace(camera, volumeMeshes);
-    if (!hit) return;
-
-    const snapped = snapToWTGrid(hit.point);
-
-    if (state.stairPhase === 'idle') {
-        // Yellow marker at hover position
-        drawMarkerCube(snapped.x, snapped.y, snapped.z, stairMarkerMat);
-    } else if (state.stairPhase === 'placing') {
-        // Draw yellow markers at all committed waypoints
-        for (const wp of state.stairWaypoints) {
-            drawMarkerCube(wp.x, wp.y, wp.z, stairMarkerMat);
-        }
-
-        // Build preview of committed segments + current hover as next waypoint
-        const previewWps = [...state.stairWaypoints, snapped];
-
-        if (previewWps.length >= 2) {
-            const pts = buildStaircasePreviewLines(
-                previewWps, state.stairWidth, state.stairStepHeight, state.stairSide, state.stairRiseOverRun
-            );
-            if (pts.length >= 2) {
-                const geo = new THREE.BufferGeometry().setFromPoints(pts);
-                stairPreviewGroup.add(new THREE.LineSegments(geo, stairPreviewMat));
             }
         }
     }
@@ -1484,7 +1323,6 @@ function animate() {
 
     updateDoorPreview();
     updateExtrudePreview();
-    updateStairPreview();
     updatePlatformPreview();
     updateHUD(camera);
     renderer.render(scene, camera);

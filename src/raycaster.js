@@ -94,7 +94,7 @@ export function pickGroundOnly(camera) {
     return null;
 }
 
-// Pick any object (volumes, platforms, staircases) or the ground plane — returns the nearest hit
+// Pick any object (volumes, platforms) or the ground plane — returns the nearest hit
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // Y=0 ground plane
 const groundIntersect = new THREE.Vector3();
 
