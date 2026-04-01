@@ -1,6 +1,7 @@
 {
     "facility_white_tile": {
         "label": "Facility White Tile",
+        "group": "Facility",
         "key": "1",
         "zones": {
             "0": { "texture": "grey_tile_floor", "repeat": 0.35 },
@@ -14,6 +15,7 @@
     },
     "facility_blue_brick": {
         "label": "Facility Blue Brick",
+        "group": "Facility",
         "key": "2",
         "zones": {
             "0": { "texture": "grey_tile_floor", "repeat": 0.35 },
@@ -27,6 +29,7 @@
     },
     "facility_industrial_room": {
         "label": "Facility Industrial",
+        "group": "Facility",
         "key": "3",
         "zones": {
             "0": { "texture": "yellow_floor", "repeat": 0.1 },

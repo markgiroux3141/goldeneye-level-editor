@@ -70,6 +70,8 @@ export function showMessage(msg) {
 const TOOL_LABELS = { push_pull: 'PUSH/PULL', door: 'DOOR', extrude: 'EXTRUDE', platform: 'PLATFORM' };
 
 export function updateHUD(camera) {
+    const terrainSettingsEl = document.getElementById('terrain-settings');
+    if (terrainSettingsEl) terrainSettingsEl.style.display = 'none';
     const lines = [];
 
     if (state.tool === 'platform') {

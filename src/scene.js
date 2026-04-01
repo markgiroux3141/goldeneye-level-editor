@@ -2,7 +2,7 @@
 
 import * as THREE from 'three';
 
-export let scene, renderer, camera;
+export let scene, renderer, camera, gridHelper;
 
 export function initScene() {
     scene = new THREE.Scene();
@@ -25,9 +25,9 @@ export function initScene() {
     scene.add(new THREE.HemisphereLight(0x8888ff, 0x444422, 0.3));
 
     // Ground grid — 1 line per WT (0.25m spacing)
-    const grid = new THREE.GridHelper(100, 400, 0x004400, 0x002200);
-    grid.position.y = -0.01;
-    scene.add(grid);
+    gridHelper = new THREE.GridHelper(100, 400, 0x004400, 0x002200);
+    gridHelper.position.y = -0.01;
+    scene.add(gridHelper);
 
     // Resize
     window.addEventListener('resize', () => {

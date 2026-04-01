@@ -3,6 +3,7 @@
 import { Volume } from './core/Volume.js';
 import { Platform } from './core/Platform.js';
 import { StairRun } from './core/StairRun.js';
+import { TerrainMap } from './core/TerrainMap.js';
 
 export const state = {
     volumes: [],
@@ -50,8 +51,34 @@ export const state = {
     platformSizeZ: 4,         // default platform Z size for placement
     platformThickness: 1,     // default platform thickness
 
+    // Radial menu state (transient)
+    radialMenuOpen: false,
+
     // View mode (transient — not serialized or in undo snapshots)
     viewMode: 'grid',         // 'grid' | 'textured'
+    showGrid: true,           // grid helper visibility
+    showWireframe: true,      // terrain mesh wireframe visibility
+
+    // Editor mode
+    editorMode: 'indoor',     // 'indoor' | 'terrain'
+
+    // Terrain data (serialized)
+    terrainMaps: [],           // TerrainMap[]
+    nextTerrainMapId: 1,
+
+    // Terrain tool state (transient — not serialized or in undo snapshots)
+    terrainTool: 'boundary',   // 'boundary' | 'hole' | 'edit' | 'sculpt'
+    terrainDrawingPhase: 'idle', // 'idle' | 'drawing' | 'closed'
+    terrainDrawingVertices: [], // Current in-progress polygon [{x, z}]
+    selectedTerrainId: null,   // ID of active terrain map
+    terrainCameraMode: 'ortho', // 'ortho' | 'perspective' — camera in terrain mode
+
+    // Brush state (transient)
+    brushType: 'raise',        // 'raise' | 'noise' | 'smooth' | 'flatten'
+    brushRadius: 8,            // radius in WT units
+    brushStrength: 0.5,        // 0-1
+    brushNoiseScale: 0.1,      // noise frequency for noise brush
+    brushNoiseAmp: 2,          // noise amplitude for noise brush
 };
 
 export function saveUndoState() {
@@ -60,6 +87,7 @@ export function saveUndoState() {
         connections: state.connections,
         platforms: state.platforms.map(p => p.toJSON()),
         stairRuns: state.stairRuns.map(r => r.toJSON()),
+        terrainMaps: state.terrainMaps.map(t => t.toJSON()),
     });
     state.undoStack.push(snapshot);
     if (state.undoStack.length > state.maxUndo) state.undoStack.shift();
@@ -72,13 +100,16 @@ export function undo() {
     state.connections = snapshot.connections;
     state.platforms = (snapshot.platforms || []).map(j => Platform.fromJSON(j));
     state.stairRuns = (snapshot.stairRuns || []).map(j => StairRun.fromJSON(j));
+    state.terrainMaps = (snapshot.terrainMaps || []).map(j => TerrainMap.fromJSON(j));
     state.nextVolumeId = Math.max(...state.volumes.map(v => v.id), 0) + 1;
     state.nextConnectionId = Math.max(...state.connections.map(c => c.id), 0) + 1;
     state.nextPlatformId = Math.max(...state.platforms.map(p => p.id), 0) + 1;
     state.nextStairRunId = Math.max(...state.stairRuns.map(r => r.id), 0) + 1;
+    state.nextTerrainMapId = Math.max(...state.terrainMaps.map(t => t.id), 0) + 1;
     state.selectedFace = null;
     state.selectedPlatformId = null;
     state.selectedStairRunId = null;
+    state.selectedTerrainId = null;
     return true;
 }
 
@@ -88,10 +119,12 @@ export function serializeLevel() {
         connections: state.connections,
         platforms: state.platforms.map(p => p.toJSON()),
         stairRuns: state.stairRuns.map(r => r.toJSON()),
+        terrainMaps: state.terrainMaps.map(t => t.toJSON()),
         nextVolumeId: state.nextVolumeId,
         nextConnectionId: state.nextConnectionId,
         nextPlatformId: state.nextPlatformId,
         nextStairRunId: state.nextStairRunId,
+        nextTerrainMapId: state.nextTerrainMapId,
     }, null, 2);
 }
 
@@ -101,12 +134,15 @@ export function deserializeLevel(json) {
     state.connections = data.connections || [];
     state.platforms = (data.platforms || []).map(j => Platform.fromJSON(j));
     state.stairRuns = (data.stairRuns || []).map(j => StairRun.fromJSON(j));
+    state.terrainMaps = (data.terrainMaps || []).map(j => TerrainMap.fromJSON(j));
     state.nextVolumeId = data.nextVolumeId || (Math.max(...state.volumes.map(v => v.id), 0) + 1);
     state.nextConnectionId = data.nextConnectionId || (Math.max(...state.connections.map(c => c.id), 0) + 1);
     state.nextPlatformId = data.nextPlatformId || (Math.max(...state.platforms.map(p => p.id), 0) + 1);
     state.nextStairRunId = data.nextStairRunId || (Math.max(...state.stairRuns.map(r => r.id), 0) + 1);
+    state.nextTerrainMapId = data.nextTerrainMapId || (Math.max(...state.terrainMaps.map(t => t.id), 0) + 1);
     state.selectedFace = null;
     state.selectedPlatformId = null;
     state.selectedStairRunId = null;
+    state.selectedTerrainId = null;
     state.undoStack = [];
 }
