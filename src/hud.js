@@ -75,14 +75,30 @@ export function updateHUD(camera) {
     if (state.tool === 'platform') {
         if (state.platformPhase === 'idle') {
             lines.push(`Click to place or select platform`);
+            lines.push(`N=simple stairs`);
         } else if (state.platformPhase === 'selected') {
             const plat = state.platforms.find(p => p.id === state.selectedPlatformId);
             if (plat) {
                 const grLabel = plat.grounded ? ' [grounded]' : '';
                 lines.push(`Platform ${plat.id}: ${plat.sizeX}x${plat.sizeZ} at Y=${plat.y}${grLabel}`);
                 lines.push(`Click arrows to move, edge handles to scale`);
-                lines.push(`X=delete  C=connect stairs  F=ground`);
+                lines.push(`X=delete  C=connect stairs  F=ground  R=railings`);
             }
+            const run = state.selectedStairRunId != null
+                ? state.stairRuns.find(r => r.id === state.selectedStairRunId)
+                : null;
+            if (run) {
+                const grLabel = run.grounded ? ' [grounded]' : '';
+                const rlLabel = run.railings ? ' [railings]' : '';
+                lines.push(`Stair run ${run.id}${grLabel}${rlLabel}`);
+                lines.push(`X=delete  F=ground  R=railings`);
+            }
+        } else if (state.platformPhase === 'simple_stair_from') {
+            lines.push(`Click first stair endpoint (any surface)`);
+            lines.push(`Esc=cancel`);
+        } else if (state.platformPhase === 'simple_stair_to') {
+            lines.push(`Click second stair endpoint`);
+            lines.push(`Esc=cancel`);
         } else if (state.platformPhase === 'connecting_dst') {
             lines.push(`Click destination platform or floor`);
         } else if (state.platformPhase === 'connecting_src') {

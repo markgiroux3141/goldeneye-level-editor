@@ -23,8 +23,8 @@ export class StairRun {
     // anchor: the anchor spec for this end.
     static resolveAnchor(platform, anchor) {
         if (!platform) {
-            // Ground connection — anchor is { x, z }
-            return { x: anchor.x, y: 0, z: anchor.z };
+            // Ground connection — anchor is { x, z } or { x, y, z }
+            return { x: anchor.x, y: anchor.y ?? 0, z: anchor.z };
         }
 
         // Platform connection — anchor is { edge, offset }

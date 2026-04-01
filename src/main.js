@@ -10,7 +10,7 @@ import { initMaterials, getWallMaterial, getTexturedMaterialArray, getTexturedMa
 import { TEXTURE_SCHEMES, getSchemeByKey, loadTextureSchemes } from './textureSchemes.js';
 import { buildVolumeGeometry } from './geometry.js';
 import { getConnectionsForFace, computeDoorPlacement } from './core/Connection.js';
-import { pickFace, pickPlatform, pickAny, pickGroundOnly } from './raycaster.js';
+import { pickFace, pickPlatform, pickStairRun, pickAny, pickGroundOnly } from './raycaster.js';
 import { showMessage, updateHUD, initHUD } from './hud.js';
 import { loadFromLocalStorage } from './io/LevelStorage.js';
 import {
@@ -341,6 +341,7 @@ function clearPlatformToolState() {
     state.platformScaleAxis = null;
     state.platformConnectFrom = null;
     state.platformConnectTo = null;
+    state.simpleStairFrom = null;
     gizmo.update(null, camera);
 }
 
@@ -373,6 +374,58 @@ document.addEventListener('mousedown', (e) => {
             return;
         }
 
+        // Simple stair placement — first click
+        if (state.platformPhase === 'simple_stair_from') {
+            const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
+            if (!anyHit) { showMessage('Click a surface'); return; }
+            const snapped = snapToWTGrid(anyHit.point);
+            state.simpleStairFrom = { x: snapped.x, y: snapped.y, z: snapped.z };
+            state.platformPhase = 'simple_stair_to';
+            showMessage('Click second stair endpoint — Esc to cancel');
+            return;
+        }
+
+        // Simple stair placement — second click
+        if (state.platformPhase === 'simple_stair_to' && state.simpleStairFrom) {
+            const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
+            if (!anyHit) { showMessage('Click a surface'); return; }
+            const snapped = snapToWTGrid(anyHit.point);
+            const fromPt = state.simpleStairFrom;
+            const toPt = { x: snapped.x, y: snapped.y, z: snapped.z };
+
+            const rise = Math.abs(toPt.y - fromPt.y);
+            if (rise === 0) {
+                showMessage('Points are at the same height — no stairs needed');
+                return;
+            }
+            const ddx = Math.abs(toPt.x - fromPt.x);
+            const ddz = Math.abs(toPt.z - fromPt.z);
+            if (ddx < 1 && ddz < 1) {
+                showMessage('Need horizontal distance between endpoints');
+                return;
+            }
+
+            saveUndoState();
+            const run = new StairRun(
+                state.nextStairRunId++,
+                null, null,
+                { x: fromPt.x, y: fromPt.y, z: fromPt.z },
+                { x: toPt.x, y: toPt.y, z: toPt.z },
+                state.stairWidth,
+                state.stairStepHeight,
+                state.stairRiseOverRun,
+            );
+            state.stairRuns.push(run);
+            rebuildStairRun(run);
+
+            const steps = Math.max(1, Math.round(rise / state.stairStepHeight));
+            showMessage(`Simple stair run created: ${steps} steps`);
+
+            state.platformPhase = 'idle';
+            state.simpleStairFrom = null;
+            return;
+        }
+
         if (state.platformPhase === 'idle' || state.platformPhase === 'selected') {
             // Check if clicking a gizmo handle (only when a platform is selected)
             if (state.selectedPlatformId != null) {
@@ -391,9 +444,27 @@ document.addEventListener('mousedown', (e) => {
             const platHit = pickPlatform(camera, platformMeshes);
             if (platHit) {
                 state.selectedPlatformId = platHit.platformId;
+                state.selectedStairRunId = null;
                 state.platformPhase = 'selected';
                 const plat = state.platforms.find(p => p.id === platHit.platformId);
                 showMessage(`Selected platform ${platHit.platformId} (${plat.sizeX}x${plat.sizeZ} at Y=${plat.y})`);
+                return;
+            }
+
+            // Try to select a stair run
+            const stairHit = pickStairRun(camera, stairRunMeshes);
+            if (stairHit) {
+                state.selectedStairRunId = stairHit.stairRunId;
+                state.selectedPlatformId = null;
+                state.platformPhase = 'selected';
+                const run = state.stairRuns.find(r => r.id === stairHit.stairRunId);
+                const fromPlat = run.fromPlatformId != null ? state.platforms.find(p => p.id === run.fromPlatformId) : null;
+                const toPlat = run.toPlatformId != null ? state.platforms.find(p => p.id === run.toPlatformId) : null;
+                const fromPt = StairRun.resolveAnchor(fromPlat, run.anchorFrom);
+                const toPt = StairRun.resolveAnchor(toPlat, run.anchorTo);
+                const rise = Math.abs(toPt.y - fromPt.y);
+                const steps = Math.max(1, Math.round(rise / run.stepHeight));
+                showMessage(`Selected stair run ${stairHit.stairRunId}: ${steps} steps`);
                 return;
             }
 
@@ -647,6 +718,10 @@ onKeyDown((e) => {
                 rebuildPlatform(selectedPlat);
                 rebuildConnectedStairRuns(selectedPlat.id);
                 showMessage('Cancelled');
+            } else if (state.platformPhase === 'simple_stair_from' || state.platformPhase === 'simple_stair_to') {
+                state.platformPhase = 'idle';
+                state.simpleStairFrom = null;
+                showMessage('Cancelled');
             } else if (state.platformPhase === 'connecting_src' || state.platformPhase === 'connecting_dst') {
                 state.platformPhase = 'selected';
                 state.platformConnectFrom = null;
@@ -667,6 +742,15 @@ onKeyDown((e) => {
             state.platformConnectTo = null;
             state.platformPhase = 'connecting_dst';
             showMessage(`Click destination platform or floor — Esc to cancel`);
+            return;
+        }
+
+        // N = simple stair mode (no platform needed)
+        if (e.code === 'KeyN' && state.platformPhase === 'idle') {
+            e.preventDefault();
+            state.platformPhase = 'simple_stair_from';
+            state.simpleStairFrom = null;
+            showMessage('Click first stair endpoint — Esc to cancel');
             return;
         }
 
@@ -730,6 +814,40 @@ onKeyDown((e) => {
             removePlatformMesh(selectedPlat.id);
             clearPlatformToolState();
             showMessage('Platform deleted');
+            return;
+        }
+
+        // --- Selected stair run keys (F/R/X) ---
+        const selectedRun = state.selectedStairRunId != null
+            ? state.stairRuns.find(r => r.id === state.selectedStairRunId)
+            : null;
+
+        if (e.code === 'KeyF' && selectedRun && state.platformPhase === 'selected') {
+            e.preventDefault();
+            saveUndoState();
+            selectedRun.grounded = !selectedRun.grounded;
+            rebuildStairRun(selectedRun);
+            showMessage(`Stair run ${selectedRun.grounded ? 'grounded' : 'floating'}`);
+            return;
+        }
+
+        if (e.code === 'KeyR' && selectedRun && state.platformPhase === 'selected') {
+            e.preventDefault();
+            saveUndoState();
+            selectedRun.railings = !selectedRun.railings;
+            rebuildStairRun(selectedRun);
+            showMessage(`Stair run railings ${selectedRun.railings ? 'ON' : 'OFF'}`);
+            return;
+        }
+
+        if ((e.code === 'KeyX' || e.key === 'Delete') && selectedRun && state.platformPhase === 'selected') {
+            e.preventDefault();
+            saveUndoState();
+            const mesh = stairRunMeshes.get(selectedRun.id);
+            if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); stairRunMeshes.delete(selectedRun.id); }
+            state.stairRuns = state.stairRuns.filter(r => r.id !== selectedRun.id);
+            clearPlatformToolState();
+            showMessage('Stair run deleted');
             return;
         }
     }
@@ -1234,6 +1352,76 @@ function updatePlatformPreview() {
                 if ((ddx >= 1 || ddz >= 1) && fromPt.y !== destPt.y) {
                     const stairPts = buildStairRunPreviewLines(
                         fromPt, destPt, state.stairWidth, state.stairStepHeight, state.stairRiseOverRun,
+                    );
+                    if (stairPts.length > 0) {
+                        const stairGeo = new THREE.BufferGeometry();
+                        stairGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(stairPts), 3));
+                        platformPreviewGroup.add(new THREE.LineSegments(stairGeo, platformSelectionMat));
+                    }
+                }
+            }
+        }
+    }
+
+    // Show selection highlight for selected stair run
+    if (state.selectedStairRunId != null && state.selectedPlatformId == null && state.platformPhase === 'selected') {
+        const run = state.stairRuns.find(r => r.id === state.selectedStairRunId);
+        if (run) {
+            const fromPlat = run.fromPlatformId != null ? state.platforms.find(p => p.id === run.fromPlatformId) : null;
+            const toPlat = run.toPlatformId != null ? state.platforms.find(p => p.id === run.toPlatformId) : null;
+            const fromPt = StairRun.resolveAnchor(fromPlat, run.anchorFrom);
+            const toPt = StairRun.resolveAnchor(toPlat, run.anchorTo);
+            const stairPts = buildStairRunPreviewLines(fromPt, toPt, run.width, run.stepHeight, run.riseOverRun);
+            if (stairPts.length > 0) {
+                const stairGeo = new THREE.BufferGeometry();
+                stairGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(stairPts), 3));
+                platformPreviewGroup.add(new THREE.LineSegments(stairGeo, platformSelectionMat));
+            }
+        }
+    }
+
+    // Simple stair preview — show markers and wireframe
+    if (state.platformPhase === 'simple_stair_from' || state.platformPhase === 'simple_stair_to') {
+        const W = WORLD_SCALE;
+        const s = 0.5;
+
+        // Helper to draw a marker cube into platformPreviewGroup
+        const drawPlatformMarker = (cx, cy, cz, mat) => {
+            const pts = [
+                new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
+                new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz-s)*W),
+                new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz-s)*W),
+                new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz-s)*W),
+                new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
+                new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
+                new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz+s)*W),
+                new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz+s)*W),
+                new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz+s)*W),
+                new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
+            ];
+            const geo = new THREE.BufferGeometry().setFromPoints(pts);
+            platformPreviewGroup.add(new THREE.Line(geo, mat));
+        };
+
+        const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
+        if (anyHit) {
+            const snapped = snapToWTGrid(anyHit.point);
+            // Draw hover marker in yellow
+            drawPlatformMarker(snapped.x, snapped.y, snapped.z, platformPreviewMat);
+
+            if (state.platformPhase === 'simple_stair_to' && state.simpleStairFrom) {
+                // Draw committed first point marker in green
+                drawPlatformMarker(state.simpleStairFrom.x, state.simpleStairFrom.y, state.simpleStairFrom.z, platformSelectionMat);
+
+                // Draw stair wireframe preview
+                const fromPt = state.simpleStairFrom;
+                const toPt = { x: snapped.x, y: snapped.y, z: snapped.z };
+                const rise = Math.abs(toPt.y - fromPt.y);
+                const ddx = Math.abs(toPt.x - fromPt.x);
+                const ddz = Math.abs(toPt.z - fromPt.z);
+                if (rise > 0 && (ddx >= 1 || ddz >= 1)) {
+                    const stairPts = buildStairRunPreviewLines(
+                        fromPt, toPt, state.stairWidth, state.stairStepHeight, state.stairRiseOverRun,
                     );
                     if (stairPts.length > 0) {
                         const stairGeo = new THREE.BufferGeometry();

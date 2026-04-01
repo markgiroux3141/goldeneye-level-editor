@@ -63,6 +63,27 @@ export function pickPlatform(camera, platformMeshes) {
     return { platformId, point: hit.point };
 }
 
+// Pick a stair run mesh under the crosshair
+// stairRunMeshes: Map<stairRunId, THREE.Mesh>
+export function pickStairRun(camera, stairRunMeshes) {
+    raycaster.setFromCamera(screenCenter, camera);
+
+    const meshes = [];
+    for (const [, mesh] of stairRunMeshes) {
+        meshes.push(mesh);
+    }
+
+    const hits = raycaster.intersectObjects(meshes, false);
+    if (hits.length === 0) return null;
+
+    const hit = hits[0];
+    const mesh = hit.object;
+    const stairRunId = mesh.userData.stairRunId;
+    if (stairRunId == null) return null;
+
+    return { stairRunId, point: hit.point };
+}
+
 // Pick only the ground plane (ignoring all meshes)
 export function pickGroundOnly(camera) {
     raycaster.setFromCamera(screenCenter, camera);
