@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { WORLD_SCALE } from '../core/Volume.js';
-import { noise2D } from './noise.js';
+import { noise2D } from '../terrain/noise.js';
 
 /**
  * Build a simple plane wall along boundary edges.

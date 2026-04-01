@@ -1,6 +1,6 @@
 // Keyboard and mouse input state tracking
 
-import { state } from './state.js';
+import { state } from '../state.js';
 
 const keys = new Set();
 let isLocked = false;

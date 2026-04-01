@@ -3,8 +3,8 @@
 
 import { on } from '../systems/EventBus.js';
 import { state } from '../state.js';
-import { TEXTURE_SCHEMES } from '../textureSchemes.js';
-import { gridHelper } from '../scene.js';
+import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
+import { gridHelper } from '../scene/setup.js';
 
 // Callbacks set during init to avoid circular imports with main.js
 let callbacks = {};

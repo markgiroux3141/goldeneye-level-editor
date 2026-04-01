@@ -1,0 +1,76 @@
+// Stair run mesh lifecycle — rebuild, remove
+
+import * as THREE from 'three';
+import { state } from '../state.js';
+import { buildStairRunGeometry, buildStairRunRailingGeometry } from '../geometry/platformGeometry.js';
+import { getWallMaterial, getTexturedMaterialArray, getRailingMaterial, getRailingGridMaterial } from '../scene/materials.js';
+import { scene } from '../scene/setup.js';
+
+// Stair run mesh storage: Map<stairRunId, THREE.Mesh>
+export const stairRunMeshes = new Map();
+
+export function rebuildStairRun(run) {
+    const old = stairRunMeshes.get(run.id);
+    if (old) {
+        scene.remove(old);
+        old.geometry.dispose();
+    }
+
+    const fromPlat = run.fromPlatformId != null ? state.platforms.find(p => p.id === run.fromPlatformId) : null;
+    const toPlat = run.toPlatformId != null ? state.platforms.find(p => p.id === run.toPlatformId) : null;
+
+    const options = {};
+    if (state.viewMode === 'textured') {
+        options.viewMode = 'textured';
+    }
+    const geometry = buildStairRunGeometry(run, fromPlat, toPlat, options);
+
+    let material;
+    if (state.viewMode === 'textured') {
+        material = getTexturedMaterialArray();
+    } else {
+        material = getWallMaterial();
+        material.vertexColors = true;
+        material.map.repeat.set(1, 1);
+    }
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData = { stairRunId: run.id };
+
+    const edges = new THREE.EdgesGeometry(geometry);
+    const wireframe = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x333333 }));
+    mesh.add(wireframe);
+
+    // Add railings if enabled
+    if (run.railings) {
+        const railGeo = buildStairRunRailingGeometry(run, fromPlat, toPlat, state.volumes);
+        if (railGeo.getAttribute('position') && railGeo.getAttribute('position').count > 0) {
+            const railMat = state.viewMode === 'textured' ? getRailingMaterial() : getRailingGridMaterial();
+            const railMesh = new THREE.Mesh(railGeo, railMat);
+            railMesh.renderOrder = 1;
+            mesh.add(railMesh);
+        }
+    }
+
+    stairRunMeshes.set(run.id, mesh);
+    scene.add(mesh);
+}
+
+export function rebuildAllStairRuns() {
+    for (const [id, mesh] of stairRunMeshes) {
+        scene.remove(mesh);
+        mesh.geometry.dispose();
+    }
+    stairRunMeshes.clear();
+    for (const run of state.stairRuns) {
+        rebuildStairRun(run);
+    }
+}
+
+// Rebuild all stair runs connected to a specific platform
+export function rebuildConnectedStairRuns(platformId) {
+    for (const run of state.stairRuns) {
+        if (run.fromPlatformId === platformId || run.toPlatformId === platformId) {
+            rebuildStairRun(run);
+        }
+    }
+}

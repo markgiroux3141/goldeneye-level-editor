@@ -1,7 +1,7 @@
 // First-person fly camera — no gravity
 
 import * as THREE from 'three';
-import { isKeyDown, isPointerLocked, consumeMouseDelta } from './input.js';
+import { isKeyDown, isPointerLocked, consumeMouseDelta } from '../input/input.js';
 
 const MOVE_SPEED = 8;
 const LOOK_SPEED = 0.002;

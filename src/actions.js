@@ -29,9 +29,9 @@ export function pushSelectedFace(showMessage, rebuildCallback, rebuildAllCallbac
 
     if (isFullFace && isAtInnerPos) {
         // Full wall face — extend the volume
-        if (canExtendVolume(state.volumes, vol, face.axis, face.side)) {
+        if (canExtendVolume(state.volumes, vol, face.axis, face.side, state.pushStep)) {
             saveUndoState();
-            applyPush(vol, face.axis, face.side);
+            applyPush(vol, face.axis, face.side, state.pushStep);
             // Update selectedFace to match the new geometry
             state.selectedFace = {
                 volumeId: vol.id, axis: face.axis, side: face.side,
@@ -64,9 +64,9 @@ function extrudeFromFace(face, parentVol, showMessage, rebuildCallback, rebuildA
         // Already connected — extend the connected volume's far face
         const connVol = state.volumes.find(v => v.id === conn.volBId);
         if (!connVol) return;
-        if (canExtendVolume(state.volumes, connVol, axis, side)) {
+        if (canExtendVolume(state.volumes, connVol, axis, side, state.pushStep)) {
             saveUndoState();
-            applyPush(connVol, axis, side);
+            applyPush(connVol, axis, side, state.pushStep);
             // Select the far face of the connected volume so user can keep pushing
             state.selectedFace = {
                 volumeId: connVol.id, axis, side,
@@ -137,7 +137,7 @@ export function pullSelectedFace(showMessage, rebuildCallback) {
     if (face.position !== innerPos) return;
 
     saveUndoState();
-    if (!applyPull(vol, face.axis, face.side)) {
+    if (!applyPull(vol, face.axis, face.side, state.pushStep)) {
         state.undoStack.pop();
         showMessage('Minimum size reached');
     } else {
@@ -513,7 +513,7 @@ export function reExtrudeVolumes(pushOrPull, showMessage, rebuildAllCallback) {
         saveUndoState();
         for (const volId of state.extrudedVolumes) {
             const vol = state.volumes.find(v => v.id === volId);
-            if (vol) applyPush(vol, axis, growSide);
+            if (vol) applyPush(vol, axis, growSide, state.pushStep);
         }
         rebuildAllCallback();
     } else { // pull — shrink protrusions back toward wall
@@ -521,7 +521,7 @@ export function reExtrudeVolumes(pushOrPull, showMessage, rebuildAllCallback) {
         let anyPulled = false;
         for (const volId of state.extrudedVolumes) {
             const vol = state.volumes.find(v => v.id === volId);
-            if (vol && applyPull(vol, axis, growSide)) {
+            if (vol && applyPull(vol, axis, growSide, state.pushStep)) {
                 anyPulled = true;
             }
         }
@@ -557,7 +557,7 @@ export function extrudeUntilBlocked(showMessage, rebuildAllCallback) {
 
         for (const volId of state.extrudedVolumes) {
             const vol = state.volumes.find(v => v.id === volId);
-            if (vol) applyPush(vol, axis, growSide);
+            if (vol) applyPush(vol, axis, growSide, state.pushStep);
         }
         steps++;
 

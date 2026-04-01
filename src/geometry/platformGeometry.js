@@ -1,8 +1,8 @@
 // Platform geometry builder — generates solid rectangular slab geometry
 
 import * as THREE from 'three';
-import { WORLD_SCALE } from './core/Volume.js';
-import { Platform } from './core/Platform.js';
+import { WORLD_SCALE } from '../core/Volume.js';
+import { Platform } from '../core/Platform.js';
 
 const S = WORLD_SCALE;
 

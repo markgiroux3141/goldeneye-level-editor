@@ -1,7 +1,7 @@
 // Radial "clock" menu — middle-click to open, hierarchical submenus
 
 import { emit } from '../systems/EventBus.js';
-import { hotkeyManager, eventToBinding } from './HotkeyManager.js';
+import { hotkeyManager, eventToBinding } from '../input/HotkeyManager.js';
 
 export class RadialMenu {
     constructor() {

@@ -1,8 +1,8 @@
 // HUD updates and message display
 
-import { state } from './state.js';
-import { on } from './systems/EventBus.js';
-import { TEXTURE_SCHEMES } from './textureSchemes.js';
+import { state } from '../state.js';
+import { on } from '../systems/EventBus.js';
+import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
 
 const statusEl = document.getElementById('status');
 const toolInfoEl = document.getElementById('tool-info');

@@ -6,9 +6,9 @@ export function outerOverlapsInner(outerBox, innerBox) {
            outerBox.minZ < innerBox.maxZ && outerBox.maxZ > innerBox.minZ;
 }
 
-export function canExtendVolume(volumes, vol, axis, side, excludeIds = []) {
+export function canExtendVolume(volumes, vol, axis, side, step, excludeIds = []) {
     const test = vol.clone();
-    applyPush(test, axis, side);
+    applyPush(test, axis, side, step);
 
     const outerBox = {
         minX: test.outerMinX, maxX: test.outerMaxX,
@@ -88,13 +88,10 @@ export function canPlaceVolumes(existingVolumes, newVolumes, excludeIds = [], sk
     return true;
 }
 
-import { state } from './state.js';
-// Note: collision uses state.pushStep — this dependency will be removed in Phase 5
-
 const MIN_DIMENSION = 1; // 1 WT minimum
 
-export function applyPush(vol, axis, side) {
-    const s = state.pushStep;
+export function applyPush(vol, axis, side, step) {
+    const s = step;
     if (axis === 'x') {
         if (side === 'max') vol.w += s;
         else { vol.x -= s; vol.w += s; }
@@ -107,8 +104,8 @@ export function applyPush(vol, axis, side) {
     }
 }
 
-export function applyPull(vol, axis, side) {
-    const s = state.pushStep;
+export function applyPull(vol, axis, side, step) {
+    const s = step;
     if (axis === 'x') {
         if (vol.w <= MIN_DIMENSION) return false;
         if (side === 'max') vol.w -= s;

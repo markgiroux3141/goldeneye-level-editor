@@ -1,7 +1,7 @@
 // Menu tree definition — data-driven structure for the radial menu
 
-import { TEXTURE_SCHEMES } from '../textureSchemes.js';
-import { hotkeyManager } from './HotkeyManager.js';
+import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
+import { hotkeyManager } from '../input/HotkeyManager.js';
 
 export function buildMenuTree() {
     return [

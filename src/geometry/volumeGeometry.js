@@ -11,8 +11,8 @@
 // Winding is the single source of truth, like Blender.
 
 import * as THREE from 'three';
-import { WALL_THICKNESS, WORLD_SCALE } from './core/Volume.js';
-import { facesMatch, getVolumeFaceBounds, getFacePosition } from './core/Face.js';
+import { WALL_THICKNESS, WORLD_SCALE } from '../core/Volume.js';
+import { facesMatch, getVolumeFaceBounds, getFacePosition } from '../core/Face.js';
 
 // Re-export for any consumers that imported facesMatch from here
 export { facesMatch };
