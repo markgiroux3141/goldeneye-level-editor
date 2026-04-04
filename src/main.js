@@ -19,13 +19,14 @@ import { applyBrush } from './terrain/terrainBrush.js';
 import { RadialMenu } from './ui/RadialMenu.js';
 import { buildMenuTree } from './ui/menuConfig.js';
 import { initMenuActions } from './ui/menuActions.js';
-import { terrainMeshes, rebuildVolume, rebuildPlatform, rebuildConnectedStairRuns, rebuildTerrainWalls, generateTerrainMesh, rebuildAll } from './mesh/MeshManager.js';
+import { terrainMeshes, rebuildVolume, rebuildPlatform, rebuildConnectedStairRuns, rebuildTerrainWalls, generateTerrainMesh, rebuildAll, rebuildLight, setRealtimePreview } from './mesh/MeshManager.js';
 import { updateDoorPreview } from './preview/doorPreview.js';
 import { updateExtrudePreview } from './preview/extrudePreview.js';
 import { updatePlatformPreview } from './preview/platformPreview.js';
 import { updateTerrainPreview } from './preview/terrainPreview.js';
 import { updateTerrainHUD } from './hud/terrainHud.js';
-import { initToolManager, clearPlatformToolState, toggleEditorMode, getActiveTerrain } from './tools/ToolManager.js';
+import { initToolManager, clearPlatformToolState, clearLightToolState, toggleEditorMode, getActiveTerrain } from './tools/ToolManager.js';
+import { bakeAllLighting, clearBakedLighting } from './lighting/lightBaker.js';
 import { handleIndoorClick } from './tools/indoorClick.js';
 import { handleTerrainClick, handleTerrainMouseUp, handleTerrainMouseMove, handleTerrainWheel, getIsSculpting } from './tools/terrainClick.js';
 import { handleIndoorKey } from './tools/indoorKeys.js';
@@ -117,8 +118,21 @@ onKeyDown((e) => {
         showMessage,
         clearExtrudeState,
         clearPlatformToolState,
+        clearLightToolState,
         rebuildVolume,
         rebuildAll,
+        bakeLighting: () => {
+            const elapsed = bakeAllLighting(32);
+            showMessage(`Baked lighting in ${elapsed}s (${state.pointLights.length} lights)`);
+        },
+        clearBake: () => {
+            clearBakedLighting();
+            showMessage('Baked lighting cleared');
+        },
+        toggleRealtimePreview: () => {
+            setRealtimePreview(!state.realtimePreview);
+            showMessage('Realtime Preview: ' + (state.realtimePreview ? 'ON' : 'OFF'));
+        },
     });
 
     // Try loading saved level — if found, skip the mode chooser
@@ -198,6 +212,51 @@ onKeyDown((e) => {
     if (terrainBrushStrengthInput) {
         terrainBrushStrengthInput.addEventListener('change', () => {
             state.brushStrength = Math.max(0.1, Math.min(1, parseFloat(terrainBrushStrengthInput.value) || 0.5));
+        });
+    }
+
+    // Light settings panel inputs
+    const lightColorInput = document.getElementById('light-color');
+    const lightIntensityInput = document.getElementById('light-intensity');
+    const lightRangeInput = document.getElementById('light-range');
+
+    function getSelectedLight() {
+        if (state.selectedLightId == null) return null;
+        return state.pointLights.find(l => l.id === state.selectedLightId) || null;
+    }
+
+    if (lightColorInput) {
+        lightColorInput.addEventListener('input', () => {
+            const light = getSelectedLight();
+            if (!light) return;
+            const hex = lightColorInput.value;
+            light.color.r = parseInt(hex.slice(1, 3), 16) / 255;
+            light.color.g = parseInt(hex.slice(3, 5), 16) / 255;
+            light.color.b = parseInt(hex.slice(5, 7), 16) / 255;
+            rebuildLight(light);
+        });
+    }
+    if (lightIntensityInput) {
+        lightIntensityInput.addEventListener('change', () => {
+            const light = getSelectedLight();
+            if (!light) return;
+            light.intensity = Math.max(0.1, parseFloat(lightIntensityInput.value) || 1.0);
+            rebuildLight(light);
+        });
+    }
+    if (lightRangeInput) {
+        lightRangeInput.addEventListener('change', () => {
+            const light = getSelectedLight();
+            if (!light) return;
+            light.range = Math.max(1, parseInt(lightRangeInput.value) || 20);
+            rebuildLight(light);
+        });
+    }
+
+    const lightAmbientInput = document.getElementById('light-ambient');
+    if (lightAmbientInput) {
+        lightAmbientInput.addEventListener('change', () => {
+            state.bakeAmbient = Math.max(0, parseFloat(lightAmbientInput.value) || 1.0);
         });
     }
 
@@ -292,10 +351,15 @@ function animate() {
         const { dx, dy } = consumeMouseDelta();
         const changed = gizmo.processDrag(dx, dy, camera);
         if (changed) {
-            const plat = state.platforms.find(p => p.id === state.selectedPlatformId);
-            if (plat) {
-                rebuildPlatform(plat);
-                rebuildConnectedStairRuns(plat.id);
+            if (state.tool === 'light' && state.selectedLightId != null) {
+                const light = state.pointLights.find(l => l.id === state.selectedLightId);
+                if (light) rebuildLight(light);
+            } else {
+                const plat = state.platforms.find(p => p.id === state.selectedPlatformId);
+                if (plat) {
+                    rebuildPlatform(plat);
+                    rebuildConnectedStairRuns(plat.id);
+                }
             }
         }
     }
@@ -303,10 +367,13 @@ function animate() {
     updateCamera(camera, dt);
 
     // Update gizmo position and hover state
-    const selectedPlat = (state.tool === 'platform' && state.selectedPlatformId != null)
-        ? state.platforms.find(p => p.id === state.selectedPlatformId)
-        : null;
-    gizmo.update(selectedPlat, camera);
+    let gizmoTarget = null;
+    if (state.tool === 'platform' && state.selectedPlatformId != null) {
+        gizmoTarget = state.platforms.find(p => p.id === state.selectedPlatformId) || null;
+    } else if (state.tool === 'light' && state.selectedLightId != null) {
+        gizmoTarget = state.pointLights.find(l => l.id === state.selectedLightId) || null;
+    }
+    gizmo.update(gizmoTarget, camera);
 
     updateDoorPreview(camera);
     updateExtrudePreview(camera);

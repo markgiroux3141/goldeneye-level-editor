@@ -94,16 +94,34 @@ export function pickGroundOnly(camera) {
     return null;
 }
 
-// Pick any object (volumes, platforms) or the ground plane — returns the nearest hit
+// Pick a light mesh under the crosshair
+// pickTargets: array of Mesh (icon + core parts from getLightPickTargets())
+export function pickLight(camera, pickTargets) {
+    raycaster.setFromCamera(screenCenter, camera);
+
+    const hits = raycaster.intersectObjects(pickTargets, false);
+    if (hits.length === 0) return null;
+
+    const hit = hits[0];
+    const lightId = hit.object.userData.lightId;
+    if (lightId == null) return null;
+
+    return { lightId, point: hit.point };
+}
+
+// Pick any object (volumes, platforms, lights) or the ground plane — returns the nearest hit
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // Y=0 ground plane
 const groundIntersect = new THREE.Vector3();
 
-export function pickAny(camera, volumeMeshes, platformMeshes) {
+export function pickAny(camera, volumeMeshes, platformMeshes, lightPickTargets) {
     raycaster.setFromCamera(screenCenter, camera);
 
     const allMeshes = [];
     for (const [, data] of volumeMeshes) allMeshes.push(data.mesh);
     for (const [, mesh] of platformMeshes) allMeshes.push(mesh);
+    if (lightPickTargets) {
+        for (const mesh of lightPickTargets) allMeshes.push(mesh);
+    }
 
     const hits = raycaster.intersectObjects(allMeshes, false);
 
@@ -123,6 +141,11 @@ export function pickAny(camera, volumeMeshes, platformMeshes) {
     // If ground is closer than the mesh hit (with tolerance to avoid z-fighting), return ground
     if (groundHit && groundDist < hit.distance - 0.01) {
         return groundHit;
+    }
+
+    // Check if it's a light
+    if (mesh.userData.lightId != null) {
+        return { type: 'light', lightId: mesh.userData.lightId, point: hit.point };
     }
 
     // Check if it's a platform

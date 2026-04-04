@@ -5,6 +5,7 @@ import { state } from '../state.js';
 import { buildVolumeGeometry } from '../geometry/volumeGeometry.js';
 import { getWallMaterial, getTexturedMaterialArrayForScheme } from '../scene/materials.js';
 import { scene } from '../scene/setup.js';
+import { reapplyBakedColors } from '../lighting/bakedColorStore.js';
 
 // Volume mesh storage: Map<volumeId, { mesh, faceIds }>
 export const volumeMeshes = new Map();
@@ -45,6 +46,11 @@ export function rebuildVolume(vol) {
 
     volumeMeshes.set(vol.id, { mesh, faceIds });
     scene.add(mesh);
+
+    // Re-apply baked lighting if active
+    if (state.bakedLighting) {
+        reapplyBakedColors('vol_' + vol.id, geometry);
+    }
 }
 
 export function rebuildAllVolumes() {

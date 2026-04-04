@@ -5,6 +5,7 @@ import { state } from '../state.js';
 import { buildStairRunGeometry, buildStairRunRailingGeometry } from '../geometry/platformGeometry.js';
 import { getWallMaterial, getTexturedMaterialArray, getRailingMaterial, getRailingGridMaterial } from '../scene/materials.js';
 import { scene } from '../scene/setup.js';
+import { reapplyBakedColors } from '../lighting/bakedColorStore.js';
 
 // Stair run mesh storage: Map<stairRunId, THREE.Mesh>
 export const stairRunMeshes = new Map();
@@ -53,6 +54,22 @@ export function rebuildStairRun(run) {
 
     stairRunMeshes.set(run.id, mesh);
     scene.add(mesh);
+
+    // Re-apply baked lighting if active
+    if (state.bakedLighting) {
+        reapplyBakedColors('stair_' + run.id, geometry);
+        // Re-apply to child meshes (railings)
+        for (let i = 0; i < mesh.children.length; i++) {
+            const child = mesh.children[i];
+            if (!child.isMesh || !child.geometry.getAttribute('color')) continue;
+            if (reapplyBakedColors('stair_' + run.id + '_child_' + i, child.geometry)) {
+                if (child.material && !child.material.vertexColors) {
+                    child.material.vertexColors = true;
+                    child.material.needsUpdate = true;
+                }
+            }
+        }
+    }
 }
 
 export function rebuildAllStairRuns() {

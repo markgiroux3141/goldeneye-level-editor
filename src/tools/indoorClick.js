@@ -4,23 +4,86 @@ import { WORLD_SCALE } from '../core/Volume.js';
 import { state, saveUndoState } from '../state.js';
 import { isPointerLocked } from '../input/input.js';
 import { showMessage } from '../hud/hud.js';
-import { pickFace, pickPlatform, pickStairRun, pickAny } from '../raycaster.js';
+import { pickFace, pickPlatform, pickStairRun, pickLight, pickAny } from '../raycaster.js';
 import { addExtrudeSelection, clearExtrudeState, placeDoorOnFace, snapToWTGrid } from '../actions.js';
 import { Platform } from '../core/Platform.js';
 import { StairRun } from '../core/StairRun.js';
+import { PointLight } from '../core/PointLight.js';
 import {
     volumeMeshes, platformMeshes,
     rebuildVolume, rebuildAllVolumes,
     rebuildPlatform, rebuildStairRun, rebuildConnectedStairRuns,
+    rebuildLight, updateLightSelection, getLightPickTargets,
 } from '../mesh/MeshManager.js';
 import { stairRunMeshes } from '../mesh/MeshManager.js';
 import { closestPlatformEdge, closestOffsetOnEdge, projectCrosshairOntoEdge, bestEdgeForDirection } from './platformEdgeUtils.js';
-import { clearPlatformToolState } from './ToolManager.js';
+import { clearPlatformToolState, clearLightToolState } from './ToolManager.js';
 
 export function handleIndoorClick(e, { gizmo, camera }) {
     if (!isPointerLocked() || e.button !== 0) return;
 
     const hit = pickFace(camera, volumeMeshes);
+
+    // Light tool click handling
+    if (state.tool === 'light') {
+        // If gizmo is being dragged, click confirms the drag
+        if (gizmo.isDragging()) {
+            gizmo.endDrag();
+            const light = state.pointLights.find(l => l.id === state.selectedLightId);
+            if (light) rebuildLight(light);
+            showMessage('Confirmed');
+            return;
+        }
+
+        // If a light is selected, check if clicking a gizmo handle
+        if (state.selectedLightId != null) {
+            const gizmoHit = gizmo.pick(camera);
+            if (gizmoHit && gizmoHit.type === 'move') {
+                const light = state.pointLights.find(l => l.id === state.selectedLightId);
+                saveUndoState();
+                gizmo.startDrag('move', gizmoHit.axis, light);
+                showMessage(`Moving ${gizmoHit.axis.toUpperCase()} — move mouse to drag, click to confirm, Esc to cancel`);
+                return;
+            }
+        }
+
+        // Try to select an existing light
+        const lightTargets = getLightPickTargets();
+        const lightHit = pickLight(camera, lightTargets);
+        if (lightHit) {
+            state.selectedLightId = lightHit.lightId;
+            state.lightPhase = 'selected';
+            updateLightSelection();
+            const light = state.pointLights.find(l => l.id === lightHit.lightId);
+            showMessage(`Selected light ${lightHit.lightId} at (${light.x}, ${light.y}, ${light.z})`);
+            return;
+        }
+
+        // If already selected and clicked empty space, deselect
+        if (state.selectedLightId != null) {
+            clearLightToolState();
+            updateLightSelection();
+            return;
+        }
+
+        // Place new light at the hit surface
+        const anyHit = pickAny(camera, volumeMeshes, platformMeshes, lightTargets);
+        if (!anyHit) return;
+        const snapped = snapToWTGrid(anyHit.point);
+
+        saveUndoState();
+        const light = new PointLight(
+            state.nextPointLightId++,
+            snapped.x, snapped.y + 4, snapped.z,
+        );
+        state.pointLights.push(light);
+        rebuildLight(light);
+        state.selectedLightId = light.id;
+        state.lightPhase = 'selected';
+        updateLightSelection();
+        showMessage(`Placed light ${light.id} at (${light.x}, ${light.y}, ${light.z})`);
+        return;
+    }
 
     // Platform tool click handling
     if (state.tool === 'platform') {

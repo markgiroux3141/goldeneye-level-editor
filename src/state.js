@@ -4,6 +4,7 @@ import { Volume } from './core/Volume.js';
 import { Platform } from './core/Platform.js';
 import { StairRun } from './core/StairRun.js';
 import { TerrainMap } from './core/TerrainMap.js';
+import { PointLight } from './core/PointLight.js';
 
 export const state = {
     volumes: [],
@@ -79,6 +80,19 @@ export const state = {
     brushStrength: 0.5,        // 0-1
     brushNoiseScale: 0.1,      // noise frequency for noise brush
     brushNoiseAmp: 2,          // noise amplitude for noise brush
+
+    // Point lights (serialized)
+    pointLights: [],           // PointLight[]
+    nextPointLightId: 1,
+
+    // Light tool state (transient)
+    selectedLightId: null,
+    lightPhase: 'idle',        // 'idle' | 'selected' | 'moving'
+
+    // Baked lighting state (transient)
+    bakedLighting: false,
+    realtimePreview: false,   // when true, Three.js PointLights are active + scene lights dimmed
+    bakeAmbient: 1.0,         // ambient light level for baking (0-1)
 };
 
 export function saveUndoState() {
@@ -88,6 +102,7 @@ export function saveUndoState() {
         platforms: state.platforms.map(p => p.toJSON()),
         stairRuns: state.stairRuns.map(r => r.toJSON()),
         terrainMaps: state.terrainMaps.map(t => t.toJSON()),
+        pointLights: state.pointLights.map(l => l.toJSON()),
     });
     state.undoStack.push(snapshot);
     if (state.undoStack.length > state.maxUndo) state.undoStack.shift();
@@ -101,15 +116,18 @@ export function undo() {
     state.platforms = (snapshot.platforms || []).map(j => Platform.fromJSON(j));
     state.stairRuns = (snapshot.stairRuns || []).map(j => StairRun.fromJSON(j));
     state.terrainMaps = (snapshot.terrainMaps || []).map(j => TerrainMap.fromJSON(j));
+    state.pointLights = (snapshot.pointLights || []).map(j => PointLight.fromJSON(j));
     state.nextVolumeId = Math.max(...state.volumes.map(v => v.id), 0) + 1;
     state.nextConnectionId = Math.max(...state.connections.map(c => c.id), 0) + 1;
     state.nextPlatformId = Math.max(...state.platforms.map(p => p.id), 0) + 1;
     state.nextStairRunId = Math.max(...state.stairRuns.map(r => r.id), 0) + 1;
     state.nextTerrainMapId = Math.max(...state.terrainMaps.map(t => t.id), 0) + 1;
+    state.nextPointLightId = Math.max(...state.pointLights.map(l => l.id), 0) + 1;
     state.selectedFace = null;
     state.selectedPlatformId = null;
     state.selectedStairRunId = null;
     state.selectedTerrainId = null;
+    state.selectedLightId = null;
     return true;
 }
 
@@ -120,11 +138,13 @@ export function serializeLevel() {
         platforms: state.platforms.map(p => p.toJSON()),
         stairRuns: state.stairRuns.map(r => r.toJSON()),
         terrainMaps: state.terrainMaps.map(t => t.toJSON()),
+        pointLights: state.pointLights.map(l => l.toJSON()),
         nextVolumeId: state.nextVolumeId,
         nextConnectionId: state.nextConnectionId,
         nextPlatformId: state.nextPlatformId,
         nextStairRunId: state.nextStairRunId,
         nextTerrainMapId: state.nextTerrainMapId,
+        nextPointLightId: state.nextPointLightId,
     }, null, 2);
 }
 
@@ -135,14 +155,17 @@ export function deserializeLevel(json) {
     state.platforms = (data.platforms || []).map(j => Platform.fromJSON(j));
     state.stairRuns = (data.stairRuns || []).map(j => StairRun.fromJSON(j));
     state.terrainMaps = (data.terrainMaps || []).map(j => TerrainMap.fromJSON(j));
+    state.pointLights = (data.pointLights || []).map(j => PointLight.fromJSON(j));
     state.nextVolumeId = data.nextVolumeId || (Math.max(...state.volumes.map(v => v.id), 0) + 1);
     state.nextConnectionId = data.nextConnectionId || (Math.max(...state.connections.map(c => c.id), 0) + 1);
     state.nextPlatformId = data.nextPlatformId || (Math.max(...state.platforms.map(p => p.id), 0) + 1);
     state.nextStairRunId = data.nextStairRunId || (Math.max(...state.stairRuns.map(r => r.id), 0) + 1);
     state.nextTerrainMapId = data.nextTerrainMapId || (Math.max(...state.terrainMaps.map(t => t.id), 0) + 1);
+    state.nextPointLightId = data.nextPointLightId || (Math.max(...state.pointLights.map(l => l.id), 0) + 1);
     state.selectedFace = null;
     state.selectedPlatformId = null;
     state.selectedStairRunId = null;
     state.selectedTerrainId = null;
+    state.selectedLightId = null;
     state.undoStack = [];
 }

@@ -67,14 +67,43 @@ export function showMessage(msg) {
     messageTimeout = setTimeout(() => { messageEl.style.opacity = '0'; }, 2000);
 }
 
-const TOOL_LABELS = { push_pull: 'PUSH/PULL', door: 'DOOR', extrude: 'EXTRUDE', platform: 'PLATFORM' };
+const TOOL_LABELS = { push_pull: 'PUSH/PULL', door: 'DOOR', extrude: 'EXTRUDE', platform: 'PLATFORM', light: 'LIGHT' };
 
 export function updateHUD(camera) {
     const terrainSettingsEl = document.getElementById('terrain-settings');
     if (terrainSettingsEl) terrainSettingsEl.style.display = 'none';
+    const lightSettingsEl = document.getElementById('light-settings');
+    if (lightSettingsEl) lightSettingsEl.style.display = 'none';
     const lines = [];
 
-    if (state.tool === 'platform') {
+    if (state.tool === 'light') {
+        if (lightSettingsEl && state.selectedLightId != null) {
+            lightSettingsEl.style.display = '';
+        }
+        const light = state.selectedLightId != null
+            ? state.pointLights.find(l => l.id === state.selectedLightId)
+            : null;
+        if (light) {
+            const hex = '#' + ((light.color.r * 255 | 0) << 16 | (light.color.g * 255 | 0) << 8 | (light.color.b * 255 | 0)).toString(16).padStart(6, '0');
+            lines.push(`Light ${light.id}: (${light.x}, ${light.y}, ${light.z})`);
+            lines.push(`Color: ${hex}  Int: ${light.intensity}  Range: ${light.range}`);
+            lines.push(`Click arrows to move, X=delete, Esc=deselect`);
+            // Sync settings inputs to selected light values
+            const colorInput = document.getElementById('light-color');
+            const intensityInput = document.getElementById('light-intensity');
+            const rangeInput = document.getElementById('light-range');
+            if (colorInput && colorInput !== document.activeElement) colorInput.value = hex;
+            if (intensityInput && intensityInput !== document.activeElement) intensityInput.value = light.intensity;
+            if (rangeInput && rangeInput !== document.activeElement) rangeInput.value = light.range;
+            const ambientInput = document.getElementById('light-ambient');
+            if (ambientInput && ambientInput !== document.activeElement) ambientInput.value = state.bakeAmbient;
+        } else {
+            lines.push(`Click to place light`);
+            // Still show light settings for ambient even when no light selected
+            if (lightSettingsEl) lightSettingsEl.style.display = '';
+        }
+        lines.push(`Lights: ${state.pointLights.length}  Ambient: ${state.bakeAmbient}`);
+    } else if (state.tool === 'platform') {
         if (state.platformPhase === 'idle') {
             lines.push(`Click to place or select platform`);
             lines.push(`N=simple stairs`);

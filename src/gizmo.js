@@ -103,30 +103,39 @@ export class PlatformGizmo {
         }
     }
 
-    // Position gizmo to match platform, update hover highlight
-    update(platform, camera) {
-        if (!platform) {
+    // Position gizmo to match a target, update hover highlight.
+    // target can be a Platform (has centerX, centerZ, sizeX, sizeZ) or
+    // a PointLight (has x, y, z only — scale handles are hidden).
+    update(target, camera) {
+        if (!target) {
             this.group.visible = false;
             return;
         }
 
         this.group.visible = true;
 
-        // Position move arrows at platform center
-        const cx = platform.centerX * S;
-        const cy = platform.y * S;
-        const cz = platform.centerZ * S;
+        const hasDimensions = target.sizeX != null;
+
+        // Position move arrows at target center
+        const cx = hasDimensions ? target.centerX * S : target.x * S;
+        const cy = target.y * S;
+        const cz = hasDimensions ? target.centerZ * S : target.z * S;
 
         for (const arrow of Object.values(this.moveArrows)) {
             arrow.position.set(cx, cy, cz);
         }
 
-        // Position scale handles at edge midpoints (on top surface)
-        const hY = (platform.y + HANDLE_SIZE / 2) * S;
-        this.scaleHandles.xMax.position.set(platform.maxX * S, hY, (platform.centerZ) * S);
-        this.scaleHandles.xMin.position.set(platform.x * S, hY, (platform.centerZ) * S);
-        this.scaleHandles.zMax.position.set((platform.centerX) * S, hY, platform.maxZ * S);
-        this.scaleHandles.zMin.position.set((platform.centerX) * S, hY, platform.z * S);
+        // Scale handles: show only for targets with dimensions (platforms)
+        if (hasDimensions) {
+            const hY = (target.y + HANDLE_SIZE / 2) * S;
+            this.scaleHandles.xMax.position.set(target.maxX * S, hY, (target.centerZ) * S);
+            this.scaleHandles.xMin.position.set(target.x * S, hY, (target.centerZ) * S);
+            this.scaleHandles.zMax.position.set((target.centerX) * S, hY, target.maxZ * S);
+            this.scaleHandles.zMin.position.set((target.centerX) * S, hY, target.z * S);
+        }
+        for (const handle of Object.values(this.scaleHandles)) {
+            handle.visible = hasDimensions;
+        }
 
         // Update hover highlight
         const hit = this._raycast(camera);
@@ -166,17 +175,17 @@ export class PlatformGizmo {
         return this.drag !== null;
     }
 
-    // Start a drag operation
-    startDrag(type, axis, platform) {
+    // Start a drag operation. target can be a Platform or PointLight.
+    startDrag(type, axis, target) {
         this.drag = {
             type,
             axis,
-            platform,
-            origX: platform.x,
-            origY: platform.y,
-            origZ: platform.z,
-            origSizeX: platform.sizeX,
-            origSizeZ: platform.sizeZ,
+            platform: target,
+            origX: target.x,
+            origY: target.y,
+            origZ: target.z,
+            origSizeX: target.sizeX,
+            origSizeZ: target.sizeZ,
             accumulated: 0,
         };
     }
@@ -210,11 +219,14 @@ export class PlatformGizmo {
         const projX = worldAxis.dot(camRight);
         const projY = worldAxis.dot(camUp);
 
-        // Scale sensitivity by distance to platform
-        const platformCenter = new THREE.Vector3(
-            platform.centerX * S, platform.y * S, platform.centerZ * S,
+        // Scale sensitivity by distance to target
+        const hasDimensions = platform.sizeX != null;
+        const targetCenter = new THREE.Vector3(
+            (hasDimensions ? platform.centerX : platform.x) * S,
+            platform.y * S,
+            (hasDimensions ? platform.centerZ : platform.z) * S,
         );
-        const dist = Math.max(0.5, camera.position.distanceTo(platformCenter));
+        const dist = Math.max(0.5, camera.position.distanceTo(targetCenter));
         const sensitivity = dist * 0.008;
 
         // Accumulate drag
@@ -274,14 +286,16 @@ export class PlatformGizmo {
         platform.x = origX;
         platform.y = origY;
         platform.z = origZ;
-        platform.sizeX = origSizeX;
-        platform.sizeZ = origSizeZ;
+        if (origSizeX != null) platform.sizeX = origSizeX;
+        if (origSizeZ != null) platform.sizeZ = origSizeZ;
         this.drag = null;
     }
 
     // Get the original values for undo (call before startDrag)
-    getOriginalState(platform) {
-        return { x: platform.x, y: platform.y, z: platform.z, sizeX: platform.sizeX, sizeZ: platform.sizeZ };
+    getOriginalState(target) {
+        const s = { x: target.x, y: target.y, z: target.z };
+        if (target.sizeX != null) { s.sizeX = target.sizeX; s.sizeZ = target.sizeZ; }
+        return s;
     }
 
     dispose() {

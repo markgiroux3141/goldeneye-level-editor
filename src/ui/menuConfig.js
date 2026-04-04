@@ -13,6 +13,7 @@ export function buildMenuTree() {
                 { label: 'Extrude', action: 'tool:extrude', hotkey: hotkeyManager.getDisplayKey('cycle_tool'), hotkeyAction: 'cycle_tool' },
                 { label: 'Platform', action: 'tool:platform', hotkey: hotkeyManager.getDisplayKey('cycle_tool'), hotkeyAction: 'cycle_tool' },
                 { label: 'Simple Stairs', action: 'tool:simple_stairs', hotkey: hotkeyManager.getDisplayKey('simple_stairs'), hotkeyAction: 'simple_stairs' },
+                { label: 'Light', action: 'tool:light', hotkey: hotkeyManager.getDisplayKey('cycle_tool'), hotkeyAction: 'cycle_tool' },
             ],
         },
         {
@@ -25,6 +26,14 @@ export function buildMenuTree() {
                 { label: 'Grid Mode', action: 'view:grid', hotkey: hotkeyManager.getDisplayKey('toggle_view'), hotkeyAction: 'toggle_view' },
                 { label: 'Textured Mode', action: 'view:textured', hotkey: hotkeyManager.getDisplayKey('toggle_view'), hotkeyAction: 'toggle_view' },
                 { label: 'Toggle Grid Lines', action: 'view:toggle_grid', hotkey: hotkeyManager.getDisplayKey('toggle_grid'), hotkeyAction: 'toggle_grid' },
+            ],
+        },
+        {
+            label: 'Lighting',
+            children: [
+                { label: 'Bake Lighting', action: 'lighting:bake' },
+                { label: 'Clear Bake', action: 'lighting:clear' },
+                { label: 'Realtime Preview', action: 'lighting:toggle_realtime' },
             ],
         },
         {

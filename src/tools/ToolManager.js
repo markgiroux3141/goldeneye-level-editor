@@ -7,8 +7,8 @@ import { clearExtrudeState } from '../actions.js';
 import { setIndoorMeshesVisible } from '../mesh/MeshManager.js';
 import { TerrainMap } from '../core/TerrainMap.js';
 
-const TOOL_CYCLE = ['push_pull', 'door', 'extrude', 'platform'];
-const TOOL_NAMES = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', platform: 'Platform' };
+const TOOL_CYCLE = ['push_pull', 'door', 'extrude', 'platform', 'light'];
+const TOOL_NAMES = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', platform: 'Platform', light: 'Light' };
 const TERRAIN_TOOL_CYCLE = ['boundary', 'hole', 'edit', 'sculpt'];
 const TERRAIN_TOOL_NAMES = { boundary: 'Boundary', hole: 'Hole', edit: 'Edit', sculpt: 'Sculpt' };
 const BRUSH_CYCLE = ['raise', 'noise', 'smooth', 'flatten'];
@@ -36,6 +36,13 @@ export function clearPlatformToolState() {
     _gizmo.update(null, _camera);
 }
 
+export function clearLightToolState() {
+    if (_gizmo.isDragging()) _gizmo.cancelDrag();
+    state.selectedLightId = null;
+    state.lightPhase = 'idle';
+    _gizmo.update(null, _camera);
+}
+
 export function cycleToolForward() {
     if (state.editorMode === 'terrain') {
         const idx = TERRAIN_TOOL_CYCLE.indexOf(state.terrainTool);
@@ -47,6 +54,7 @@ export function cycleToolForward() {
     state.tool = TOOL_CYCLE[(idx + 1) % TOOL_CYCLE.length];
     if (state.tool !== 'extrude') clearExtrudeState();
     if (state.tool !== 'platform') clearPlatformToolState();
+    if (state.tool !== 'light') clearLightToolState();
     showMessage('Tool: ' + TOOL_NAMES[state.tool]);
 }
 

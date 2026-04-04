@@ -18,31 +18,29 @@ class BrushDef {
         this.op = op;
         this.x = x; this.y = y; this.z = z;
         this.w = w; this.h = h; this.d = d;
-        this.clipPlanes = []; // Array of { nx, ny, nz, d } — plane normal + distance
+        // Per-face taper: key = 'x-min'|'x-max'|'y-min'|'y-max'|'z-min'|'z-max'
+        // value = { u: number, v: number } — symmetric inset in WT on each edge
+        this.taper = {};
     }
 
+    hasTaper() { return Object.keys(this.taper).length > 0; }
+
     toCSGBrush() {
-        let geo;
-        if (this.clipPlanes.length === 0) {
-            // Fast path: no clip planes, use standard box
-            geo = new THREE.BoxGeometry(this.w * SCALE, this.h * SCALE, this.d * SCALE);
-            const cx = (this.x + this.w / 2) * SCALE;
-            const cy = (this.y + this.h / 2) * SCALE;
-            const cz = (this.z + this.d / 2) * SCALE;
-            const brush = new CSGBrush(geo);
-            brush.position.set(cx, cy, cz);
-            brush.updateMatrixWorld();
-            return brush;
+        const geo = new THREE.BoxGeometry(this.w * SCALE, this.h * SCALE, this.d * SCALE);
+        if (this.hasTaper()) {
+            applyTaperToBoxGeo(geo, this);
         }
-        // Clipped path: build geometry from clipped polygons
-        geo = buildClippedGeometry(this);
+        const cx = (this.x + this.w / 2) * SCALE;
+        const cy = (this.y + this.h / 2) * SCALE;
+        const cz = (this.z + this.d / 2) * SCALE;
         const brush = new CSGBrush(geo);
+        brush.position.set(cx, cy, cz);
         brush.updateMatrixWorld();
         return brush;
     }
 
     getFaces() {
-        const faces = [
+        return [
             { brushId: this.id, axis: 'x', side: 'min', pos: this.x },
             { brushId: this.id, axis: 'x', side: 'max', pos: this.x + this.w },
             { brushId: this.id, axis: 'y', side: 'min', pos: this.y },
@@ -50,17 +48,6 @@ class BrushDef {
             { brushId: this.id, axis: 'z', side: 'min', pos: this.z },
             { brushId: this.id, axis: 'z', side: 'max', pos: this.z + this.d },
         ];
-        // Add clip-plane faces
-        for (let i = 0; i < this.clipPlanes.length; i++) {
-            const cp = this.clipPlanes[i];
-            faces.push({
-                brushId: this.id,
-                type: 'clip',
-                planeIndex: i,
-                nx: cp.nx, ny: cp.ny, nz: cp.nz, d: cp.d
-            });
-        }
-        return faces;
     }
 
     get minX() { return this.x; }  get maxX() { return this.x + this.w; }
@@ -68,179 +55,57 @@ class BrushDef {
     get minZ() { return this.z; }  get maxZ() { return this.z + this.d; }
 }
 
-// ─── Sutherland-Hodgman Polygon Clipping ────────────────────────────
-// Clips a polygon (array of {x,y,z} vertices) against a half-plane.
-// Keeps vertices on the side where dot(normal, v) + d <= 0.
+// ─── Frustum Geometry Builder ───────────────────────────────────────
+// Builds a BufferGeometry for a brush with tapered faces.
+// A taper on a face insets its 4 vertices toward the face center,
+// creating a frustum (truncated pyramid) shape. Side faces become trapezoids.
 
-function clipPolygonByPlane(polygon, nx, ny, nz, d) {
-    if (polygon.length === 0) return [];
-    const out = [];
-    for (let i = 0; i < polygon.length; i++) {
-        const a = polygon[i];
-        const b = polygon[(i + 1) % polygon.length];
-        const da = nx * a.x + ny * a.y + nz * a.z + d;
-        const db = nx * b.x + ny * b.y + nz * b.z + d;
-        if (da <= 0) {
-            // A is inside
-            out.push(a);
-            if (db > 0) {
-                // B is outside — add intersection
-                out.push(lerpVertex(a, b, da / (da - db)));
+// ─── Taper: Modify BoxGeometry Vertices In-Place ────────────────────
+// Instead of building custom geometry, we modify a standard BoxGeometry.
+// This preserves the index buffer, UVs, and groups that three-bvh-csg expects.
+// For each tapered face, we find all vertices at that face's position and
+// move them toward the face center in the face's UV plane.
+
+function applyTaperToBoxGeo(geo, brush) {
+    const pos = geo.getAttribute('position');
+    const hw = brush.w * SCALE / 2;
+    const hh = brush.h * SCALE / 2;
+    const hd = brush.d * SCALE / 2;
+
+    for (const [faceKey, { u: tU, v: tV }] of Object.entries(brush.taper)) {
+        const [axis, side] = faceKey.split('-');
+
+        // Determine: which position component identifies this face,
+        // what value it should match, and which components to adjust
+        let checkAxis, target, uAxis, vAxis;
+        if (axis === 'y') {
+            checkAxis = 1; target = side === 'max' ? hh : -hh;
+            uAxis = 0; vAxis = 2; // U=X, V=Z
+        } else if (axis === 'x') {
+            checkAxis = 0; target = side === 'max' ? hw : -hw;
+            uAxis = 2; vAxis = 1; // U=Z, V=Y
+        } else {
+            checkAxis = 2; target = side === 'max' ? hd : -hd;
+            uAxis = 0; vAxis = 1; // U=X, V=Y
+        }
+
+        const getComp = (i, c) => c === 0 ? pos.getX(i) : c === 1 ? pos.getY(i) : pos.getZ(i);
+
+        for (let i = 0; i < pos.count; i++) {
+            const val = getComp(i, checkAxis);
+            if (Math.abs(val - target) < 0.001) {
+                const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+                const coords = [x, y, z];
+                // Move U and V components toward center (center is 0 in local space)
+                coords[uAxis] -= Math.sign(coords[uAxis]) * tU * SCALE;
+                coords[vAxis] -= Math.sign(coords[vAxis]) * tV * SCALE;
+                pos.setXYZ(i, coords[0], coords[1], coords[2]);
             }
-        } else if (db <= 0) {
-            // A is outside, B is inside — add intersection
-            out.push(lerpVertex(a, b, da / (da - db)));
-        }
-    }
-    return out;
-}
-
-function lerpVertex(a, b, t) {
-    return {
-        x: a.x + (b.x - a.x) * t,
-        y: a.y + (b.y - a.y) * t,
-        z: a.z + (b.z - a.z) * t,
-    };
-}
-
-// ─── Clipped Geometry Builder ───────────────────────────────────────
-// Builds a BufferGeometry from a box brush with clip planes applied.
-
-function buildClippedGeometry(brush) {
-    const x0 = brush.x * SCALE, x1 = (brush.x + brush.w) * SCALE;
-    const y0 = brush.y * SCALE, y1 = (brush.y + brush.h) * SCALE;
-    const z0 = brush.z * SCALE, z1 = (brush.z + brush.d) * SCALE;
-
-    // 6 box faces as polygons (wound CCW when viewed from outside)
-    let facePolygons = [
-        // -X face (normal pointing -X)
-        [{ x: x0, y: y0, z: z1 }, { x: x0, y: y1, z: z1 }, { x: x0, y: y1, z: z0 }, { x: x0, y: y0, z: z0 }],
-        // +X face (normal pointing +X)
-        [{ x: x1, y: y0, z: z0 }, { x: x1, y: y1, z: z0 }, { x: x1, y: y1, z: z1 }, { x: x1, y: y0, z: z1 }],
-        // -Y face (normal pointing -Y)
-        [{ x: x0, y: y0, z: z0 }, { x: x1, y: y0, z: z0 }, { x: x1, y: y0, z: z1 }, { x: x0, y: y0, z: z1 }],
-        // +Y face (normal pointing +Y)
-        [{ x: x0, y: y1, z: z1 }, { x: x1, y: y1, z: z1 }, { x: x1, y: y1, z: z0 }, { x: x0, y: y1, z: z0 }],
-        // -Z face (normal pointing -Z)
-        [{ x: x1, y: y0, z: z0 }, { x: x0, y: y0, z: z0 }, { x: x0, y: y1, z: z0 }, { x: x1, y: y1, z: z0 }],
-        // +Z face (normal pointing +Z)
-        [{ x: x0, y: y0, z: z1 }, { x: x1, y: y0, z: z1 }, { x: x1, y: y1, z: z1 }, { x: x0, y: y1, z: z1 }],
-    ];
-
-    // Clip each box face by all clip planes
-    // Clip planes are defined in world-tile space; convert d to account for SCALE
-    const scaledPlanes = brush.clipPlanes.map(cp => ({
-        nx: cp.nx, ny: cp.ny, nz: cp.nz,
-        d: cp.d * SCALE  // d is in WT, scale to world
-    }));
-
-    for (const sp of scaledPlanes) {
-        facePolygons = facePolygons.map(poly => clipPolygonByPlane(poly, sp.nx, sp.ny, sp.nz, sp.d));
-    }
-
-    // Generate cap faces along each clip plane
-    // Collect all edges that lie on the clip plane from all clipped polygons
-    const capPolygons = [];
-    for (const sp of scaledPlanes) {
-        const capPoly = buildCapPolygon(sp, facePolygons);
-        if (capPoly && capPoly.length >= 3) {
-            capPolygons.push(capPoly);
         }
     }
 
-    // Triangulate all polygons
-    const triangles = [];
-    const allPolygons = [...facePolygons, ...capPolygons];
-    for (const poly of allPolygons) {
-        if (poly.length < 3) continue;
-        // Fan triangulation (works for convex polygons)
-        for (let i = 1; i < poly.length - 1; i++) {
-            triangles.push(poly[0], poly[i], poly[i + 1]);
-        }
-    }
-
-    // Build BufferGeometry
-    const positions = new Float32Array(triangles.length * 3);
-    for (let i = 0; i < triangles.length; i++) {
-        positions[i * 3] = triangles[i].x;
-        positions[i * 3 + 1] = triangles[i].y;
-        positions[i * 3 + 2] = triangles[i].z;
-    }
-
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    pos.needsUpdate = true;
     geo.computeVertexNormals();
-    return geo;
-}
-
-// Build a cap polygon for a clip plane by collecting intersection edges
-function buildCapPolygon(scaledPlane, clippedFacePolygons) {
-    const { nx, ny, nz, d } = scaledPlane;
-    const EPS = 1e-6;
-
-    // Collect all edges that lie on the clip plane
-    const edgePoints = [];
-    for (const poly of clippedFacePolygons) {
-        if (poly.length < 2) continue;
-        for (let i = 0; i < poly.length; i++) {
-            const v = poly[i];
-            const dist = nx * v.x + ny * v.y + nz * v.z + d;
-            if (Math.abs(dist) < EPS) {
-                edgePoints.push(v);
-            }
-        }
-    }
-
-    if (edgePoints.length < 3) return null;
-
-    // Remove near-duplicate points
-    const unique = [edgePoints[0]];
-    for (let i = 1; i < edgePoints.length; i++) {
-        const p = edgePoints[i];
-        let isDup = false;
-        for (const u of unique) {
-            if (Math.abs(p.x - u.x) < EPS && Math.abs(p.y - u.y) < EPS && Math.abs(p.z - u.z) < EPS) {
-                isDup = true; break;
-            }
-        }
-        if (!isDup) unique.push(p);
-    }
-
-    if (unique.length < 3) return null;
-
-    // Sort points into a convex polygon by projecting onto the clip plane's 2D space
-    // Pick two tangent axes for the plane
-    let uAxis, vAxis;
-    if (Math.abs(ny) > Math.abs(nx) && Math.abs(ny) > Math.abs(nz)) {
-        uAxis = { x: 1, y: 0, z: 0 };
-    } else {
-        uAxis = { x: 0, y: 1, z: 0 };
-    }
-    // Gram-Schmidt: make uAxis perpendicular to normal
-    const dotNU = nx * uAxis.x + ny * uAxis.y + nz * uAxis.z;
-    uAxis = { x: uAxis.x - nx * dotNU, y: uAxis.y - ny * dotNU, z: uAxis.z - nz * dotNU };
-    const uLen = Math.sqrt(uAxis.x ** 2 + uAxis.y ** 2 + uAxis.z ** 2);
-    uAxis = { x: uAxis.x / uLen, y: uAxis.y / uLen, z: uAxis.z / uLen };
-    vAxis = {
-        x: ny * uAxis.z - nz * uAxis.y,
-        y: nz * uAxis.x - nx * uAxis.z,
-        z: nx * uAxis.y - ny * uAxis.x,
-    };
-
-    // Project to 2D, compute centroid, sort by angle
-    const cx = unique.reduce((s, p) => s + p.x, 0) / unique.length;
-    const cy = unique.reduce((s, p) => s + p.y, 0) / unique.length;
-    const cz = unique.reduce((s, p) => s + p.z, 0) / unique.length;
-
-    unique.sort((a, b) => {
-        const au = uAxis.x * (a.x - cx) + uAxis.y * (a.y - cy) + uAxis.z * (a.z - cz);
-        const av = vAxis.x * (a.x - cx) + vAxis.y * (a.y - cy) + vAxis.z * (a.z - cz);
-        const bu = uAxis.x * (b.x - cx) + uAxis.y * (b.y - cy) + uAxis.z * (b.z - cz);
-        const bv = vAxis.x * (b.x - cx) + vAxis.y * (b.y - cy) + vAxis.z * (b.z - cz);
-        return Math.atan2(av, au) - Math.atan2(bv, bu);
-    });
-
-    return unique;
 }
 
 // ─── Face UV Helpers ─────────────────────────────────────────────────
@@ -270,7 +135,6 @@ function getBakedFaceUVInfo(face) {
     let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
     const v = new THREE.Vector3();
 
-    // Scan all triangles that belong to this baked face
     for (let i = 0; i < currentFaceIds.length; i++) {
         const f = currentFaceIds[i];
         if (!f || f.brushId !== 0 || f.axis !== axis || f.side !== side || f.position !== position) continue;
@@ -286,9 +150,6 @@ function getBakedFaceUVInfo(face) {
 
     if (!isFinite(uMin)) return null;
 
-    // Snap to grid
-    uMin = Math.round(uMin / SCALE) * SCALE; // already in WT from worldToFaceUV
-    // Actually worldToFaceUV divides by SCALE internally so values are in WT
     return {
         uMin: Math.round(uMin), uMax: Math.round(uMax),
         vMin: Math.round(vMin), vMax: Math.round(vMax),
@@ -311,26 +172,23 @@ let selSizeU = 0;         // selection width in WT (0 = full face)
 let selSizeV = 0;         // selection height in WT (0 = full face)
 let selU0 = 0, selU1 = 0, selV0 = 0, selV1 = 0; // computed each frame
 
-// Active push/pull tracking
-let activeBrush = null;   // the brush being grown by consecutive +/- presses
-let activeOp = null;       // 'push' or 'pull'
+// Active push/pull/extrude tracking
+let activeBrush = null;   // the brush being grown by consecutive operations
+let activeOp = null;       // 'push' | 'pull' | 'extrude'
 
 // ─── Shell Auto-Resize ───────────────────────────────────────────────
 
-// Track the baked geometry's bounding box so the shell can wrap it
-let bakedBounds = null; // { minX, minY, minZ, maxX, maxY, maxZ } or null
+let bakedBounds = null;
 
 function updateShell() {
     let minX = Infinity, minY = Infinity, minZ = Infinity;
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
 
-    // Include baked bounds
     if (bakedBounds) {
         minX = bakedBounds.minX; minY = bakedBounds.minY; minZ = bakedBounds.minZ;
         maxX = bakedBounds.maxX; maxY = bakedBounds.maxY; maxZ = bakedBounds.maxZ;
     }
 
-    // Include new subtractive brushes
     for (const b of brushes) {
         if (b.op !== 'subtract') continue;
         minX = Math.min(minX, b.minX); minY = Math.min(minY, b.minY); minZ = Math.min(minZ, b.minZ);
@@ -349,26 +207,18 @@ function updateShell() {
 
 const csgEvaluator = new Evaluator();
 
-// Baked brushes — consolidated into a single list entry.
-// Shell stays live and is never baked. The bake just collapses all current
-// brushes into one pre-evaluated CSGBrush that acts as a single "brush" in
-// the evaluation chain. This keeps things simple: shell is always fresh,
-// baked block is one CSG step, new brushes follow after.
-let bakedCSGBrush = null;   // pre-evaluated CSGBrush of all baked interior ops
+let bakedCSGBrush = null;
 let totalBakedBrushes = 0;
 
 function evaluateBrushes() {
     const t0 = performance.now();
 
-    // Always start from a fresh shell
     let result = shell.toCSGBrush();
 
-    // Apply baked operations as a single subtraction (if any)
     if (bakedCSGBrush) {
         result = csgEvaluator.evaluate(result, bakedCSGBrush, SUBTRACTION);
     }
 
-    // Apply new brushes on top
     for (const brush of brushes) {
         const csgBrush = brush.toCSGBrush();
         const op = brush.op === 'subtract' ? SUBTRACTION : ADDITION;
@@ -386,39 +236,25 @@ function bake() {
     if (brushes.length === 0 && !bakedCSGBrush) return;
     const t0 = performance.now();
 
-    // Build the "void shape" — the union of all carved spaces.
-    // We combine all subtractive brushes (rooms) via ADDITION (they're all voids),
-    // and apply additive brushes (pillars/notches) via SUBTRACTION (they remove void).
-
-    let interior = bakedCSGBrush; // start from previous bake, if any
+    let interior = bakedCSGBrush;
 
     for (const brush of brushes) {
         const csgBrush = brush.toCSGBrush();
         if (brush.op === 'subtract') {
-            // Room carving → add to the void shape
-            if (!interior) {
-                interior = csgBrush;
-            } else {
-                interior = csgEvaluator.evaluate(interior, csgBrush, ADDITION);
-            }
+            if (!interior) { interior = csgBrush; }
+            else { interior = csgEvaluator.evaluate(interior, csgBrush, ADDITION); }
         } else {
-            // Fill/pillar → remove from the void shape
-            if (interior) {
-                interior = csgEvaluator.evaluate(interior, csgBrush, SUBTRACTION);
-            }
+            if (interior) { interior = csgEvaluator.evaluate(interior, csgBrush, SUBTRACTION); }
         }
     }
 
     const bakedCount = brushes.length;
     totalBakedBrushes += bakedCount;
-
     bakedCSGBrush = interior;
 
-    // Compute baked bounds from the interior geometry for shell sizing
     if (interior && interior.geometry) {
         interior.geometry.computeBoundingBox();
         const bb = interior.geometry.boundingBox;
-        // Convert from world space back to WT
         bakedBounds = {
             minX: Math.round(bb.min.x / SCALE), minY: Math.round(bb.min.y / SCALE), minZ: Math.round(bb.min.z / SCALE),
             maxX: Math.round(bb.max.x / SCALE), maxY: Math.round(bb.max.y / SCALE), maxZ: Math.round(bb.max.z / SCALE),
@@ -426,15 +262,12 @@ function bake() {
     }
 
     brushes.length = 0;
-
-    // Reset selection
     selectedFace = null;
     activeBrush = null;
     activeOp = null;
     selSizeU = 0;
     selSizeV = 0;
 
-    // Shell stays live — updateShell will be called on next operation
     const elapsed = performance.now() - t0;
     console.log(`Baked ${bakedCount} brushes in ${elapsed.toFixed(1)}ms (${totalBakedBrushes} total baked)`);
 
@@ -490,43 +323,20 @@ function buildFaceMap(geometry, brushList) {
             axis = 'z'; side = normal.z > 0 ? 'min' : 'max'; posAlongAxis = centroid.z / SCALE;
         }
 
-        // First try to match clip-plane faces (by normal alignment)
-        let bestFace = null, bestScore = Infinity;
+        // Match to nearest brush face (relaxed threshold for sloped taper faces)
+        let bestFace = null, bestDist = Infinity;
         for (const face of allFaces) {
-            if (face.type === 'clip') {
-                // Compare triangle normal with clip plane normal
-                const dot = normal.x * face.nx + normal.y * face.ny + normal.z * face.nz;
-                // Clip plane normal points outward from kept geometry,
-                // triangle normal should be close to opposite (or same, depending on winding)
-                const alignment = Math.abs(Math.abs(dot) - 1);
-                if (alignment < 0.1) {
-                    // Check distance of centroid to clip plane
-                    const planeDist = Math.abs(face.nx * centroid.x + face.ny * centroid.y + face.nz * centroid.z + face.d * SCALE);
-                    if (planeDist < bestScore && planeDist < 0.1) {
-                        bestScore = planeDist;
-                        bestFace = face;
-                    }
-                }
-                continue;
-            }
             if (face.axis !== axis || face.side !== side) continue;
             const dist = Math.abs(face.pos - posAlongAxis);
-            if (dist < bestScore) { bestScore = dist; bestFace = face; }
+            if (dist < bestDist) { bestDist = dist; bestFace = face; }
         }
 
-        if (bestFace && bestFace.type === 'clip') {
-            faceIds.push({
-                brushId: bestFace.brushId, type: 'clip',
-                planeIndex: bestFace.planeIndex,
-                nx: bestFace.nx, ny: bestFace.ny, nz: bestFace.nz, d: bestFace.d
-            });
-        } else if (bestFace && bestScore < 0.5) {
+        if (bestFace && bestDist < 0.5) {
             faceIds.push({
                 brushId: bestFace.brushId, axis: bestFace.axis,
                 side: bestFace.side, position: bestFace.pos
             });
         } else {
-            // No brush match — this is a baked surface. Use brushId 0.
             faceIds.push({
                 brushId: 0, axis, side,
                 position: Math.round(posAlongAxis)
@@ -651,37 +461,29 @@ const previewMat = new THREE.MeshBasicMaterial({
 });
 
 function updateSelectionPreview() {
-    // Remove old preview
     if (previewMesh) { scene.remove(previewMesh); previewMesh.geometry.dispose(); previewMesh = null; }
     if (!selectedFace || !csgMesh || !isLocked) return;
-    // Clip faces don't have axis-aligned preview
-    if (selectedFace.type === 'clip') return;
 
     const faceInfo = getSelectedFaceInfo();
     if (!faceInfo) return;
 
-    // Raycast to find where crosshair hits
     const raycaster = new THREE.Raycaster();
     raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
     const hits = raycaster.intersectObject(csgMesh);
     if (hits.length === 0) return;
 
-    // Check if we're still looking at the same face
     const hitFace = currentFaceIds[hits[0].faceIndex];
     if (!facesMatch(hitFace, selectedFace)) {
-        // Still show the selection at its last position
-        renderPreviewQuadFromUV(selectedFace, selU0, selU1, selV0, selV1);
+        // Not looking at the selected face — don't show a stale preview
         return;
     }
 
     const { axis } = selectedFace;
     const uv = worldToFaceUV(hits[0].point, axis);
 
-    // Determine selection size (0 = full face)
     const sU = selSizeU <= 0 ? faceInfo.uSize : Math.min(selSizeU, faceInfo.uSize);
     const sV = selSizeV <= 0 ? faceInfo.vSize : Math.min(selSizeV, faceInfo.vSize);
 
-    // Center on crosshair, clamp to face bounds, snap to grid
     let u0 = Math.round(uv.u - sU / 2);
     let v0 = Math.round(uv.v - sV / 2);
     u0 = Math.max(faceInfo.uMin, Math.min(u0, faceInfo.uMax - sU));
@@ -689,7 +491,6 @@ function updateSelectionPreview() {
     const u1 = u0 + sU;
     const v1 = v0 + sV;
 
-    // Store for push/pull to use
     selU0 = u0; selU1 = u1; selV0 = v0; selV1 = v1;
 
     renderPreviewQuadFromUV(selectedFace, u0, u1, v0, v1);
@@ -697,13 +498,9 @@ function updateSelectionPreview() {
 
 function renderPreviewQuadFromUV(face, u0, u1, v0, v1) {
     const { axis, side, position } = face;
-    // Face position is in WT units — convert to world
     const pos = position * SCALE;
-
-    // Small offset to prevent z-fighting (push slightly into the room)
     const offset = side === 'min' ? 0.002 : -0.002;
 
-    // Convert UV bounds to world positions
     let x0, x1, y0, y1, z0, z1;
     if (axis === 'x') {
         x0 = x1 = pos + offset;
@@ -753,21 +550,16 @@ function pickFace() {
 
 function facesMatch(a, b) {
     if (!a || !b) return false;
-    if (a.brushId !== b.brushId) return false;
-    if (a.type === 'clip' || b.type === 'clip') {
-        return a.type === b.type && a.planeIndex === b.planeIndex;
-    }
-    return a.axis === b.axis && a.side === b.side;
+    return a.brushId === b.brushId && a.axis === b.axis && a.side === b.side;
 }
 
 function selectFaceAtCrosshair() {
     const face = pickFace();
     if (!face) return;
 
-    // If clicking a different face, reset selection size to full
     if (!facesMatch(selectedFace, face)) {
         selectedFace = face;
-        selSizeU = 0; // 0 = full face
+        selSizeU = 0;
         selSizeV = 0;
         activeBrush = null;
         activeOp = null;
@@ -775,9 +567,8 @@ function selectFaceAtCrosshair() {
     updateHUD();
 }
 
-// Get face UV info — works for both brush faces and baked faces (brushId 0)
 function getSelectedFaceInfo() {
-    if (!selectedFace || selectedFace.type === 'clip') return null;
+    if (!selectedFace) return null;
     if (selectedFace.brushId === 0) {
         return getBakedFaceUVInfo(selectedFace);
     }
@@ -794,13 +585,13 @@ function isFullFace() {
 }
 
 function pushSelectedFace() {
-    if (!selectedFace || selectedFace.type === 'clip') return;
+    if (!selectedFace) return;
 
     const brush = brushes.find(b => b.id === selectedFace.brushId);
     const isBaked = selectedFace.brushId === 0;
 
     if (isFullFace() && brush && !isBaked) {
-        // Full face push on a real brush — resize it directly
+        // Full face push on a real brush — resize it directly (no new geometry)
         const { axis, side } = selectedFace;
         const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
         if (side === 'max') { brush[dimKey] += 1; }
@@ -825,13 +616,18 @@ function pushSelectedFace() {
 }
 
 function pullSelectedFace() {
-    if (!selectedFace || selectedFace.type === 'clip') return;
+    if (!selectedFace) return;
 
     const brush = brushes.find(b => b.id === selectedFace.brushId);
     const isBaked = selectedFace.brushId === 0;
 
-    if (isFullFace() && brush && !isBaked) {
-        // Full face pull on a real brush — shrink it
+    // Continue active pull operation first (must check before isFullFace,
+    // because after the first pull the selected face becomes a full face
+    // of the additive brush, and the full-face path would shrink it instead)
+    if (activeBrush && activeOp === 'pull') {
+        growActiveBrush(1);
+        selectedFace = getActiveBrushInwardFace();
+    } else if (isFullFace() && brush && !isBaked) {
         const { axis, side } = selectedFace;
         const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
         if (brush[dimKey] <= 1) return;
@@ -840,13 +636,8 @@ function pullSelectedFace() {
         selectedFace.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
         activeBrush = null;
     } else {
-        // Sub-face pull OR baked face pull — create/grow an additive brush
-        if (activeBrush && activeOp === 'pull') {
-            growActiveBrush(1);
-        } else {
-            activeBrush = createSubFaceBrush('add', 1);
-            activeOp = 'pull';
-        }
+        activeBrush = createSubFaceBrush('add', 1);
+        activeOp = 'pull';
         selectedFace = getActiveBrushInwardFace();
         selSizeU = 0; selSizeV = 0;
     }
@@ -856,13 +647,108 @@ function pullSelectedFace() {
     updateHUD();
 }
 
+// ─── Extrude: Push WITH new geometry ─────────────────────────────────
+// Creates a new brush from the selected face (same footprint, 1 WT deep),
+// so that subsequent push/scale operates on the new section.
+
+function extrudeSelectedFace() {
+    if (!selectedFace) return;
+
+    const brush = brushes.find(b => b.id === selectedFace.brushId);
+    const isBaked = selectedFace.brushId === 0;
+    const { axis, side } = selectedFace;
+
+    // Get the full face dimensions
+    let faceInfo;
+    if (brush) {
+        faceInfo = getFaceUVInfo(brush, axis);
+    } else if (isBaked) {
+        faceInfo = getBakedFaceUVInfo(selectedFace);
+    }
+    if (!faceInfo) return;
+
+    const depth = 1;
+    let nx, ny, nz, nw, nh, nd;
+
+    if (axis === 'x') {
+        nz = faceInfo.uMin; ny = faceInfo.vMin;
+        nd = faceInfo.uSize; nh = faceInfo.vSize;
+        nw = depth;
+        nx = side === 'max' ? selectedFace.position : selectedFace.position - depth;
+    } else if (axis === 'y') {
+        nx = faceInfo.uMin; nz = faceInfo.vMin;
+        nw = faceInfo.uSize; nd = faceInfo.vSize;
+        nh = depth;
+        ny = side === 'max' ? selectedFace.position : selectedFace.position - depth;
+    } else {
+        nx = faceInfo.uMin; ny = faceInfo.vMin;
+        nw = faceInfo.uSize; nh = faceInfo.vSize;
+        nd = depth;
+        nz = side === 'max' ? selectedFace.position : selectedFace.position - depth;
+    }
+
+    const op = brush ? brush.op : 'subtract';
+    const newBrush = new BrushDef(op, nx, ny, nz, nw, nh, nd);
+    brushes.push(newBrush);
+
+    activeBrush = newBrush;
+    activeOp = 'extrude';
+
+    // Select the outward face of the new brush
+    const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
+    selectedFace = {
+        brushId: newBrush.id, axis, side,
+        position: side === 'max' ? newBrush[axis] + newBrush[dimKey] : newBrush[axis]
+    };
+    selSizeU = 0; selSizeV = 0;
+
+    updateShell();
+    rebuildCSG();
+    updateHUD();
+}
+
+// ─── Scale Face: Taper the selected face ─────────────────────────────
+// Adjusts the inset on the selected face, creating a frustum shape.
+// delta > 0 = face gets smaller, delta < 0 = face gets larger
+
+function scaleSelectedFace(deltaU, deltaV) {
+    if (!selectedFace) return;
+
+    const brush = brushes.find(b => b.id === selectedFace.brushId);
+    if (!brush) return; // Can only scale faces on unbaked brushes
+
+    const { axis, side } = selectedFace;
+    const faceKey = `${axis}-${side}`;
+
+    if (!brush.taper[faceKey]) {
+        brush.taper[faceKey] = { u: 0, v: 0 };
+    }
+
+    const t = brush.taper[faceKey];
+    const info = getFaceUVInfo(brush, axis);
+
+    // Max inset: leave at least 1 WT on each dimension
+    const maxU = Math.floor((info.uSize - 1) / 2);
+    const maxV = Math.floor((info.vSize - 1) / 2);
+
+    t.u = Math.max(0, Math.min(maxU, t.u + deltaU));
+    t.v = Math.max(0, Math.min(maxV, t.v + deltaV));
+
+    // Remove taper entry if both are 0
+    if (t.u === 0 && t.v === 0) {
+        delete brush.taper[faceKey];
+    }
+
+    rebuildCSG();
+    updateHUD();
+}
+
+// ─── Brush Helpers ──────────────────────────────────────────────────
+
 function createSubFaceBrush(op, depth) {
     const { axis, side, position } = selectedFace;
-
-    // The face position in WT tells us where the wall surface is
     const facePos = position;
 
-    // Map selection UV back to world coordinates
     let nx, ny, nz, nw, nh, nd;
 
     if (axis === 'x') {
@@ -882,7 +768,6 @@ function createSubFaceBrush(op, depth) {
         nz = side === 'max' ? facePos : facePos - depth;
     }
 
-    // For 'add' (notch/pull), position inside the room instead of outside
     if (op === 'add') {
         if (axis === 'x') { nx = side === 'max' ? facePos - depth : facePos; }
         else if (axis === 'y') { ny = side === 'max' ? facePos - depth : facePos; }
@@ -895,7 +780,6 @@ function createSubFaceBrush(op, depth) {
 }
 
 function getActiveBrushOutwardFace() {
-    // The outward face of an extrusion — the face furthest from the original wall
     if (!activeBrush || !selectedFace) return selectedFace;
     const { axis, side } = selectedFace;
     const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
@@ -906,12 +790,9 @@ function getActiveBrushOutwardFace() {
 }
 
 function getActiveBrushInwardFace() {
-    // The inward face of a notch — the face deepest into the room
     if (!activeBrush || !selectedFace) return selectedFace;
     const { axis, side } = selectedFace;
     const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
-    // For a notch (add brush), the "interesting" face is the one facing into the room
-    // which is the opposite side from the original wall
     const inwardSide = side === 'max' ? 'min' : 'max';
     return {
         brushId: activeBrush.id, axis, side: inwardSide,
@@ -924,8 +805,7 @@ function growActiveBrush(amount) {
     const { axis, side } = selectedFace;
     const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
 
-    if (activeOp === 'push') {
-        // Grow outward
+    if (activeOp === 'push' || activeOp === 'extrude') {
         if (side === 'max') {
             activeBrush[dimKey] += amount;
         } else {
@@ -933,7 +813,6 @@ function growActiveBrush(amount) {
             activeBrush[dimKey] += amount;
         }
     } else {
-        // Grow inward (notch gets deeper)
         if (side === 'max') {
             activeBrush[axis] -= amount;
             activeBrush[dimKey] += amount;
@@ -952,75 +831,16 @@ document.addEventListener('wheel', e => {
     const info = getSelectedFaceInfo();
     if (!info) return;
 
-    // Initialize to full face width if not set
     if (selSizeU <= 0) selSizeU = info.uSize;
 
-    const delta = e.deltaY > 0 ? -1 : 1; // scroll down = shrink
+    const delta = e.deltaY > 0 ? -1 : 1;
     selSizeU = Math.max(1, Math.min(info.uSize, selSizeU + delta));
-    // selSizeV stays at 0 (full height) — only horizontal resizing
 
-    // Reset active brush when selection changes
     activeBrush = null;
     activeOp = null;
 
     updateHUD();
 }, { passive: false });
-
-// ─── Clip Plane Actions ─────────────────────────────────────────────
-
-// Current clip mode cycles through: XY-45, XZ-45, YZ-45, and diagonal
-let clipModeIndex = 0;
-const clipModes = [
-    { label: 'Ramp +Y→+Z (45°)', fn: (b) => ({ nx: 0, ny: -1, nz: -1, d: (b.y + b.h) + (b.z + b.d) }) },
-    { label: 'Ramp +Y→-Z (45°)', fn: (b) => ({ nx: 0, ny: -1, nz: 1, d: (b.y + b.h) - b.z }) },
-    { label: 'Ramp +Y→+X (45°)', fn: (b) => ({ nx: -1, ny: -1, nz: 0, d: (b.x + b.w) + (b.y + b.h) }) },
-    { label: 'Ramp +Y→-X (45°)', fn: (b) => ({ nx: 1, ny: -1, nz: 0, d: (b.y + b.h) - b.x }) },
-    { label: 'Wedge +X→+Z (45°)', fn: (b) => ({ nx: -1, ny: 0, nz: -1, d: (b.x + b.w) + (b.z + b.d) }) },
-    { label: 'Wedge +X→-Z (45°)', fn: (b) => ({ nx: -1, ny: 0, nz: 1, d: (b.x + b.w) - b.z }) },
-];
-
-function addClipPlaneToSelectedBrush() {
-    if (!selectedFace) return;
-
-    // Find the brush for the selected face
-    let brush = brushes.find(b => b.id === selectedFace.brushId);
-    if (!brush) {
-        // If no brush selected, create a new subtractive brush from the initial room
-        // so user can clip it
-        return;
-    }
-
-    const mode = clipModes[clipModeIndex];
-    const plane = mode.fn(brush);
-
-    // Normalize the plane normal
-    const len = Math.sqrt(plane.nx ** 2 + plane.ny ** 2 + plane.nz ** 2);
-    plane.nx /= len; plane.ny /= len; plane.nz /= len;
-    plane.d /= len;
-
-    brush.clipPlanes.push(plane);
-
-    console.log(`Added clip: ${mode.label} to brush ${brush.id}`);
-    updateShell();
-    rebuildCSG();
-    updateHUD();
-}
-
-function cycleClipMode(delta) {
-    clipModeIndex = (clipModeIndex + delta + clipModes.length) % clipModes.length;
-    updateHUD();
-}
-
-function removeLastClipPlane() {
-    if (!selectedFace) return;
-    const brush = brushes.find(b => b.id === selectedFace.brushId);
-    if (!brush || brush.clipPlanes.length === 0) return;
-    brush.clipPlanes.pop();
-    console.log(`Removed clip plane from brush ${brush.id}`);
-    updateShell();
-    rebuildCSG();
-    updateHUD();
-}
 
 // ─── Key Bindings ────────────────────────────────────────────────────
 
@@ -1028,19 +848,35 @@ document.addEventListener('keydown', e => {
     if (!isLocked) return;
     switch (e.code) {
         case 'Equal': case 'NumpadAdd':
-            pushSelectedFace(); break;
+            if (activeBrush && activeOp === 'extrude') {
+                // Continue growing the extruded brush
+                growActiveBrush(1);
+                selectedFace = getActiveBrushOutwardFace();
+                updateShell();
+                rebuildCSG();
+                updateHUD();
+            } else {
+                pushSelectedFace();
+            }
+            break;
         case 'Minus': case 'NumpadSubtract':
             pullSelectedFace(); break;
         case 'KeyB':
             bake(); break;
-        case 'KeyC':
-            addClipPlaneToSelectedBrush(); break;
-        case 'KeyX':
-            removeLastClipPlane(); break;
+        case 'KeyE':
+            extrudeSelectedFace(); break;
         case 'BracketLeft':
-            cycleClipMode(-1); break;
+            // Scale face smaller: [ = uniform, shift+[ = U only, ctrl+[ = V only
+            if (e.shiftKey) scaleSelectedFace(1, 0);
+            else if (e.ctrlKey) { e.preventDefault(); scaleSelectedFace(0, 1); }
+            else scaleSelectedFace(1, 1);
+            break;
         case 'BracketRight':
-            cycleClipMode(1); break;
+            // Scale face larger
+            if (e.shiftKey) scaleSelectedFace(-1, 0);
+            else if (e.ctrlKey) { e.preventDefault(); scaleSelectedFace(0, -1); }
+            else scaleSelectedFace(-1, -1);
+            break;
     }
 });
 
@@ -1054,32 +890,33 @@ document.addEventListener('mousedown', e => {
 function updateHUD() {
     let selText = 'None — click a face to select';
     if (selectedFace) {
-        if (selectedFace.type === 'clip') {
-            selText = `Face: Clip plane`;
-        } else {
-            const axisLabel = { x: 'X', y: 'Y', z: 'Z' }[selectedFace.axis];
-            const sideLabel = selectedFace.side === 'max' ? '+' : '-';
-            selText = `Face: ${axisLabel}${sideLabel}`;
+        const axisLabel = { x: 'X', y: 'Y', z: 'Z' }[selectedFace.axis];
+        const sideLabel = selectedFace.side === 'max' ? '+' : '-';
+        selText = `Face: ${axisLabel}${sideLabel}`;
 
-            const info = getSelectedFaceInfo();
-            if (info) {
-                const sU = selSizeU <= 0 ? info.uSize : selSizeU;
-                const sV = selSizeV <= 0 ? info.vSize : selSizeV;
-                const full = isFullFace() ? ' (full)' : '';
-                const baked = selectedFace.brushId === 0 ? ' [baked]' : '';
-                selText += ` | sel(${sU}×${sV})${full}${baked}`;
-            }
+        const info = getSelectedFaceInfo();
+        if (info) {
+            const sU = selSizeU <= 0 ? info.uSize : selSizeU;
+            const sV = selSizeV <= 0 ? info.vSize : selSizeV;
+            const full = isFullFace() ? ' (full)' : '';
+            const baked = selectedFace.brushId === 0 ? ' [baked]' : '';
+            selText += ` | sel(${sU}×${sV})${full}${baked}`;
         }
+
         if (activeBrush) {
             selText += ` | ${activeOp}ing`;
         }
-        // Show clip plane count for selected brush
+
+        // Show taper info for selected brush face
         const selBrush = brushes.find(b => b.id === selectedFace.brushId);
-        if (selBrush && selBrush.clipPlanes.length > 0) {
-            selText += ` | clips: ${selBrush.clipPlanes.length}`;
+        if (selBrush) {
+            const faceKey = `${selectedFace.axis}-${selectedFace.side}`;
+            const t = selBrush.taper[faceKey];
+            if (t) {
+                selText += ` | taper(${t.u}, ${t.v})`;
+            }
         }
     }
-    selText += ` | Clip: ${clipModes[clipModeIndex].label}`;
     document.getElementById('selection-info').textContent = selText;
 }
 

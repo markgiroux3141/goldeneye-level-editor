@@ -19,8 +19,10 @@ import {
     rebuildPlatform, rebuildStairRun, rebuildConnectedStairRuns,
     rebuildAllPlatforms, rebuildAllStairRuns,
     rebuildAll, removePlatformMesh,
+    rebuildLight, removeLightMesh, updateLightSelection,
+    setAllWireframeVisible,
 } from '../mesh/MeshManager.js';
-import { toggleEditorMode, cycleToolForward, clearPlatformToolState } from './ToolManager.js';
+import { toggleEditorMode, cycleToolForward, clearPlatformToolState, clearLightToolState } from './ToolManager.js';
 
 export function handleIndoorKey(e, { gizmo, camera }) {
     // M key to switch to terrain
@@ -211,6 +213,40 @@ export function handleIndoorKey(e, { gizmo, camera }) {
         }
     }
 
+    // Light tool keys
+    if (state.tool === 'light' && isPointerLocked()) {
+        const selectedLight = state.selectedLightId != null
+            ? state.pointLights.find(l => l.id === state.selectedLightId)
+            : null;
+
+        // Escape = cancel gizmo drag or deselect
+        if (hotkeyManager.matches('escape', e)) {
+            e.preventDefault();
+            if (gizmo.isDragging()) {
+                gizmo.cancelDrag();
+                if (selectedLight) rebuildLight(selectedLight);
+                showMessage('Cancelled');
+            } else {
+                clearLightToolState();
+                updateLightSelection();
+                showMessage('Light deselected');
+            }
+            return;
+        }
+
+        // Delete selected light
+        if ((hotkeyManager.matches('delete', e) || e.key === 'Delete') && selectedLight) {
+            e.preventDefault();
+            saveUndoState();
+            state.pointLights = state.pointLights.filter(l => l.id !== selectedLight.id);
+            removeLightMesh(selectedLight.id);
+            clearLightToolState();
+            updateLightSelection();
+            showMessage('Light deleted');
+            return;
+        }
+    }
+
     if (hotkeyManager.matches('toggle_view', e) && isPointerLocked()) {
         e.preventDefault();
         state.viewMode = state.viewMode === 'grid' ? 'textured' : 'grid';
@@ -226,6 +262,15 @@ export function handleIndoorKey(e, { gizmo, camera }) {
         state.showGrid = !state.showGrid;
         if (gridHelper) gridHelper.visible = state.showGrid;
         showMessage('Grid: ' + (state.showGrid ? 'ON' : 'OFF'));
+        return;
+    }
+
+    // E = toggle wireframe edges
+    if (e.code === 'KeyE' && isPointerLocked()) {
+        e.preventDefault();
+        state.showWireframe = !state.showWireframe;
+        setAllWireframeVisible(state.showWireframe);
+        showMessage('Wireframe: ' + (state.showWireframe ? 'ON' : 'OFF'));
         return;
     }
 
@@ -277,7 +322,7 @@ export function handleIndoorKey(e, { gizmo, camera }) {
         return;
     }
 
-    if (hotkeyManager.matches('escape', e) && state.tool !== 'platform') {
+    if (hotkeyManager.matches('escape', e) && state.tool !== 'platform' && state.tool !== 'light') {
         if (state.tool === 'extrude') {
             clearExtrudeState();
         }

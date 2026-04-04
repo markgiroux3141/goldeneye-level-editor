@@ -224,6 +224,7 @@
             Click - Select Face<br>
             +/- Push/Pull Face<br>
             V - Toggle View (Grid/Textured)<br>
+            E - Toggle Wireframe<br>
             T - Cycle Tool<br>
             M - Toggle Indoor/Terrain Mode<br>
             Shift+Click - Multi-Select (Extrude tool)<br>
@@ -267,6 +268,13 @@
                 <label>Wall H: <input id="terrain-wall-height" type="number" value="20" min="1" max="100" step="1"></label>
                 <label>Brush R: <input id="terrain-brush-radius" type="number" value="8" min="1" max="50" step="1"></label>
                 <label>Brush S: <input id="terrain-brush-strength" type="number" value="0.5" min="0.1" max="1" step="0.1"></label>
+            </div>
+            <div id="light-settings" style="display:none; margin-top:8px; border-top:1px solid #0a0; padding-top:6px;">
+                <span style="color:#ff0">Light</span><br>
+                <label>Color: <input id="light-color" type="color" value="#ffffff"></label>
+                <label>Intensity: <input id="light-intensity" type="number" value="5" min="0.1" max="10" step="0.1"></label>
+                <label>Range: <input id="light-range" type="number" value="20" min="1" max="100" step="1"></label>
+                <label>Ambient: <input id="light-ambient" type="number" value="1" min="0" step="0.05"></label>
             </div>
         </div>
         <div id="message"></div>

@@ -19,6 +19,8 @@ export function initMenuActions(cbs) {
             handleTextureAction(actionId.slice(8));
         } else if (actionId.startsWith('view:')) {
             handleViewAction(actionId.slice(5));
+        } else if (actionId.startsWith('lighting:')) {
+            handleLightingAction(actionId.slice(9));
         }
     });
 }
@@ -33,15 +35,38 @@ function handleToolAction(toolName) {
         return;
     }
 
-    const validTools = ['push_pull', 'door', 'extrude', 'platform'];
+    const validTools = ['push_pull', 'door', 'extrude', 'platform', 'light'];
     if (!validTools.includes(toolName)) return;
 
     state.tool = toolName;
     if (toolName !== 'extrude' && callbacks.clearExtrudeState) callbacks.clearExtrudeState();
     if (toolName !== 'platform' && callbacks.clearPlatformToolState) callbacks.clearPlatformToolState();
+    if (toolName !== 'light' && callbacks.clearLightToolState) callbacks.clearLightToolState();
 
-    const names = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', platform: 'Platform' };
+    const names = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', platform: 'Platform', light: 'Light' };
     callbacks.showMessage('Tool: ' + names[toolName]);
+}
+
+function handleLightingAction(action) {
+    if (action === 'bake') {
+        if (callbacks.bakeLighting) {
+            callbacks.bakeLighting();
+        } else {
+            callbacks.showMessage('Bake not yet available');
+        }
+    } else if (action === 'clear') {
+        if (callbacks.clearBake) {
+            callbacks.clearBake();
+        } else {
+            callbacks.showMessage('Clear bake not yet available');
+        }
+    } else if (action === 'toggle_realtime') {
+        if (callbacks.toggleRealtimePreview) {
+            callbacks.toggleRealtimePreview();
+        } else {
+            callbacks.showMessage('Toggle not yet available');
+        }
+    }
 }
 
 function handleTextureAction(schemeName) {
