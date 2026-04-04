@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CSG Brush Spike</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a2e; font-family: monospace; }
+        canvas { display: block; }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 20px; height: 20px; pointer-events: none; display: none;
+        }
+        #crosshair::before, #crosshair::after {
+            content: ''; position: absolute; background: rgba(255,255,255,0.7);
+        }
+        #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+        #crosshair::after { height: 2px; width: 100%; top: 50%; transform: translateY(-50%); }
+        #lock-prompt {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #aaa; font-size: 16px; text-align: center;
+        }
+        #info {
+            position: absolute; top: 10px; left: 10px; color: #aaa; font-size: 12px;
+            background: rgba(0,0,0,0.7); padding: 10px 14px; border-radius: 4px;
+            pointer-events: none; line-height: 1.6;
+        }
+        #info strong { color: #fff; }
+        #info .key { color: #ffcc44; }
+        #timing {
+            position: absolute; top: 10px; right: 10px; color: #0f0; font-size: 13px;
+            background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 4px;
+            pointer-events: none;
+        }
+        #selection {
+            position: absolute; bottom: 10px; left: 10px; color: #fff; font-size: 13px;
+            background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 4px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="crosshair"></div>
+    <div id="lock-prompt">Click to enter</div>
+    <div id="info">
+        <strong>CSG Brush Spike</strong><br>
+        <span class="key">WASD</span> Move &nbsp; <span class="key">Mouse</span> Look &nbsp; <span class="key">Space/Shift</span> Up/Down<br>
+        <span class="key">Click</span> Select face &nbsp; <span class="key">Scroll</span> Resize selection<br>
+        <span class="key">+</span> Push (extrude) &nbsp; <span class="key">-</span> Pull (notch) &nbsp; <span class="key">B</span> Bake<br>
+        <span class="key">C</span> Add clip plane &nbsp; <span class="key">X</span> Remove clip &nbsp; <span class="key">[ ]</span> Cycle clip mode
+    </div>
+    <div id="timing"></div>
+    <div id="selection">Selected: <span id="selection-info">None</span></div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/",
+            "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.8/src/index.js",
+            "three-bvh-csg": "https://cdn.jsdelivr.net/npm/three-bvh-csg@0.0.16/src/index.js"
+        }
+    }
+    </script>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
