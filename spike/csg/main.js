@@ -175,6 +175,7 @@ let selU0 = 0, selU1 = 0, selV0 = 0, selV1 = 0; // computed each frame
 // Active push/pull/extrude tracking
 let activeBrush = null;   // the brush being grown by consecutive operations
 let activeOp = null;       // 'push' | 'pull' | 'extrude'
+let activeSide = null;     // original face side when operation started
 
 // ─── Shell Auto-Resize ───────────────────────────────────────────────
 
@@ -265,6 +266,7 @@ function bake() {
     selectedFace = null;
     activeBrush = null;
     activeOp = null;
+    activeSide = null;
     selSizeU = 0;
     selSizeV = 0;
 
@@ -291,6 +293,21 @@ function buildFaceMap(geometry, brushList) {
     for (const brush of brushList) {
         for (const face of brush.getFaces()) {
             allFaces.push({ ...face, brush });
+        }
+    }
+
+    // Helper: check if a point (in WT space) falls within a brush's extent on the two tangent axes
+    const TOL = 0.5; // tolerance in WT
+    function centroidInBrush(brush, axis, cx, cy, cz) {
+        if (axis === 'x') {
+            return cz >= brush.minZ - TOL && cz <= brush.maxZ + TOL &&
+                   cy >= brush.minY - TOL && cy <= brush.maxY + TOL;
+        } else if (axis === 'y') {
+            return cx >= brush.minX - TOL && cx <= brush.maxX + TOL &&
+                   cz >= brush.minZ - TOL && cz <= brush.maxZ + TOL;
+        } else {
+            return cx >= brush.minX - TOL && cx <= brush.maxX + TOL &&
+                   cy >= brush.minY - TOL && cy <= brush.maxY + TOL;
         }
     }
 
@@ -323,15 +340,26 @@ function buildFaceMap(geometry, brushList) {
             axis = 'z'; side = normal.z > 0 ? 'min' : 'max'; posAlongAxis = centroid.z / SCALE;
         }
 
-        // Match to nearest brush face (relaxed threshold for sloped taper faces)
-        let bestFace = null, bestDist = Infinity;
+        // Convert centroid to WT space for bounding-box check
+        const cx = centroid.x / SCALE, cy = centroid.y / SCALE, cz = centroid.z / SCALE;
+
+        // Match to the brush whose face is closest AND whose bounding box contains
+        // the centroid on the tangent axes. Prefer smaller (more specific) brushes
+        // when distances are equal.
+        let bestFace = null, bestDist = Infinity, bestVolume = Infinity;
         for (const face of allFaces) {
             if (face.axis !== axis || face.side !== side) continue;
             const dist = Math.abs(face.pos - posAlongAxis);
-            if (dist < bestDist) { bestDist = dist; bestFace = face; }
+            if (dist > 0.5) continue; // outside tolerance
+            if (!centroidInBrush(face.brush, axis, cx, cy, cz)) continue;
+
+            const vol = face.brush.w * face.brush.h * face.brush.d;
+            if (dist < bestDist || (dist === bestDist && vol < bestVolume)) {
+                bestDist = dist; bestFace = face; bestVolume = vol;
+            }
         }
 
-        if (bestFace && bestDist < 0.5) {
+        if (bestFace) {
             faceIds.push({
                 brushId: bestFace.brushId, axis: bestFace.axis,
                 side: bestFace.side, position: bestFace.pos
@@ -561,8 +589,10 @@ function selectFaceAtCrosshair() {
         selectedFace = face;
         selSizeU = 0;
         selSizeV = 0;
+        selU0 = 0; selU1 = 0; selV0 = 0; selV1 = 0;
         activeBrush = null;
         activeOp = null;
+        activeSide = null;
     }
     updateHUD();
 }
@@ -572,7 +602,9 @@ function getSelectedFaceInfo() {
     if (selectedFace.brushId === 0) {
         return getBakedFaceUVInfo(selectedFace);
     }
-    const brush = brushes.find(b => b.id === selectedFace.brushId);
+    // Check brushes array first, then shell
+    const brush = brushes.find(b => b.id === selectedFace.brushId)
+        || (shell.id === selectedFace.brushId ? shell : null);
     if (!brush) return null;
     return getFaceUVInfo(brush, selectedFace.axis);
 }
@@ -598,11 +630,13 @@ function pushSelectedFace() {
         else { brush[axis] -= 1; brush[dimKey] += 1; }
         selectedFace.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
         activeBrush = null;
+        activeSide = null;
     } else {
         // Sub-face push OR baked face push — create/grow a subtractive brush
         if (activeBrush && activeOp === 'push') {
             growActiveBrush(1);
         } else {
+            activeSide = selectedFace.side;
             activeBrush = createSubFaceBrush('subtract', 1);
             activeOp = 'push';
         }
@@ -635,7 +669,9 @@ function pullSelectedFace() {
         else { brush[axis] += 1; brush[dimKey] -= 1; }
         selectedFace.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
         activeBrush = null;
+        activeSide = null;
     } else {
+        activeSide = selectedFace.side;
         activeBrush = createSubFaceBrush('add', 1);
         activeOp = 'pull';
         selectedFace = getActiveBrushInwardFace();
@@ -691,6 +727,7 @@ function extrudeSelectedFace() {
     const newBrush = new BrushDef(op, nx, ny, nz, nw, nh, nd);
     brushes.push(newBrush);
 
+    activeSide = side;
     activeBrush = newBrush;
     activeOp = 'extrude';
 
@@ -745,7 +782,24 @@ function scaleSelectedFace(deltaU, deltaV) {
 
 // ─── Brush Helpers ──────────────────────────────────────────────────
 
+function ensureSelectionBounds() {
+    // If selection bounds are uninitialized (all zero), compute from face info
+    if (selU0 === 0 && selU1 === 0 && selV0 === 0 && selV1 === 0) {
+        const info = getSelectedFaceInfo();
+        if (info) {
+            const sU = selSizeU <= 0 ? info.uSize : Math.min(selSizeU, info.uSize);
+            const sV = selSizeV <= 0 ? info.vSize : Math.min(selSizeV, info.vSize);
+            // Center on face
+            selU0 = info.uMin + Math.round((info.uSize - sU) / 2);
+            selV0 = info.vMin + Math.round((info.vSize - sV) / 2);
+            selU1 = selU0 + sU;
+            selV1 = selV0 + sV;
+        }
+    }
+}
+
 function createSubFaceBrush(op, depth) {
+    ensureSelectionBounds();
     const { axis, side, position } = selectedFace;
     const facePos = position;
 
@@ -780,8 +834,9 @@ function createSubFaceBrush(op, depth) {
 }
 
 function getActiveBrushOutwardFace() {
-    if (!activeBrush || !selectedFace) return selectedFace;
-    const { axis, side } = selectedFace;
+    if (!activeBrush || !activeSide) return selectedFace;
+    const { axis } = selectedFace;
+    const side = activeSide; // use original side, not flipped
     const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
     return {
         brushId: activeBrush.id, axis, side,
@@ -790,8 +845,9 @@ function getActiveBrushOutwardFace() {
 }
 
 function getActiveBrushInwardFace() {
-    if (!activeBrush || !selectedFace) return selectedFace;
-    const { axis, side } = selectedFace;
+    if (!activeBrush || !activeSide) return selectedFace;
+    const { axis } = selectedFace;
+    const side = activeSide; // use original side, not flipped
     const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
     const inwardSide = side === 'max' ? 'min' : 'max';
     return {
@@ -801,8 +857,9 @@ function getActiveBrushInwardFace() {
 }
 
 function growActiveBrush(amount) {
-    if (!activeBrush || !selectedFace) return;
-    const { axis, side } = selectedFace;
+    if (!activeBrush || !activeSide) return;
+    const { axis } = selectedFace;
+    const side = activeSide; // use original side for consistent direction
     const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
 
     if (activeOp === 'push' || activeOp === 'extrude') {
@@ -831,13 +888,21 @@ document.addEventListener('wheel', e => {
     const info = getSelectedFaceInfo();
     if (!info) return;
 
-    if (selSizeU <= 0) selSizeU = info.uSize;
-
     const delta = e.deltaY > 0 ? -1 : 1;
-    selSizeU = Math.max(1, Math.min(info.uSize, selSizeU + delta));
+
+    if (e.shiftKey) {
+        // Shift+scroll adjusts V (height)
+        if (selSizeV <= 0) selSizeV = info.vSize;
+        selSizeV = Math.max(1, Math.min(info.vSize, selSizeV + delta));
+    } else {
+        // Scroll adjusts U (width)
+        if (selSizeU <= 0) selSizeU = info.uSize;
+        selSizeU = Math.max(1, Math.min(info.uSize, selSizeU + delta));
+    }
 
     activeBrush = null;
     activeOp = null;
+    activeSide = null;
 
     updateHUD();
 }, { passive: false });
