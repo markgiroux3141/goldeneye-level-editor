@@ -109,7 +109,13 @@ export function saveUndoState() {
 
 export function undo() {
     if (state.undoStack.length === 0) return false;
-    const snapshot = JSON.parse(state.undoStack.pop());
+    let snapshot;
+    try {
+        snapshot = JSON.parse(state.undoStack.pop());
+    } catch (e) {
+        console.warn('Failed to parse undo snapshot:', e.message);
+        return false;
+    }
     state.volumes = snapshot.volumes.map(j => Volume.fromJSON(j));
     state.connections = snapshot.connections;
     state.platforms = (snapshot.platforms || []).map(j => Platform.fromJSON(j));
@@ -132,6 +138,7 @@ export function undo() {
 
 export function serializeLevel() {
     return JSON.stringify({
+        version: 1,
         volumes: state.volumes.map(v => v.toJSON()),
         connections: state.connections,
         platforms: state.platforms.map(p => p.toJSON()),
@@ -149,6 +156,8 @@ export function serializeLevel() {
 
 export function deserializeLevel(json) {
     const data = JSON.parse(json);
+    if (!data || !data.volumes) throw new Error('Invalid level data');
+    const version = data.version || 0;
     state.volumes = data.volumes.map(j => Volume.fromJSON(j));
     state.connections = data.connections || [];
     state.platforms = (data.platforms || []).map(j => Platform.fromJSON(j));

@@ -180,7 +180,7 @@ export function placeDoorOnFace(volumeId, axis, side, hitPoint, showMessage, reb
         showMessage('Door cut — connected!');
     } else {
         // Select the exit cap face so user can immediately push
-        const t = 1; // WALL_THICKNESS
+        const t = WALL_THICKNESS;
         const outerPos = side === 'min'
             ? getFacePosition(vol, axis, side) - t
             : getFacePosition(vol, axis, side) + t;
@@ -198,7 +198,7 @@ export function placeDoorOnFace(volumeId, axis, side, hitPoint, showMessage, reb
 // ADJACENCY DETECTION
 // ============================================================
 function findAdjacentVolume(vol, axis, side, doorBounds) {
-    const t = 1; // WALL_THICKNESS in WT units
+    const t = WALL_THICKNESS;
     const { u0, u1, v0, v1 } = doorBounds;
 
     for (const other of state.volumes) {

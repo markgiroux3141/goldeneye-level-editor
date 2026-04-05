@@ -87,7 +87,6 @@ export function handleIndoorClick(e, { gizmo, camera }) {
 
     // Platform tool click handling
     if (state.tool === 'platform') {
-        console.log('[platform click] phase:', state.platformPhase, 'connectFrom:', state.platformConnectFrom);
         // If gizmo is being dragged, click confirms the drag
         if (gizmo.isDragging()) {
             gizmo.endDrag();
@@ -245,7 +244,6 @@ export function handleIndoorClick(e, { gizmo, camera }) {
             const from = state.platformConnectFrom;
             const fromPlat = state.platforms.find(p => p.id === from.platformId);
             const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
-            console.log('[connect-dst] pickAny result:', anyHit ? { type: anyHit.type, platformId: anyHit.platformId, point: anyHit.point } : null);
             if (!anyHit) { showMessage('Click a platform or the floor'); return; }
 
             if (anyHit.type === 'platform' && anyHit.platformId !== from.platformId) {

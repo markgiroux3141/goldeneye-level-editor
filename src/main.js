@@ -154,7 +154,7 @@ onKeyDown((e) => {
                 // Otherwise stay in indoor mode (user clicks to lock)
             }
         }
-    } catch (e) { /* ignore */ }
+    } catch (e) { console.warn('Failed to load saved level:', e.message); }
 
     // Mode chooser buttons
     if (!loadedSave) {
