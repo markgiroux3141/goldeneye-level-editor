@@ -2,7 +2,7 @@
 
 import { Volume, WALL_THICKNESS, WORLD_SCALE } from './core/Volume.js';
 import { state, saveUndoState, undo, serializeLevel, deserializeLevel } from './state.js';
-import { canExtendVolume, canPlaceVolume, applyPush, applyPull } from './collision.js';
+import { applyPush, applyPull } from './collision.js';
 import { computeDoorPlacement, connectionExistsAt, createConnection } from './core/Connection.js';
 import { getVolumeFaceBounds, getFacePosition } from './core/Face.js';
 import { saveToLocalStorage } from './io/LevelStorage.js';
@@ -29,19 +29,15 @@ export function pushSelectedFace(showMessage, rebuildCallback, rebuildAllCallbac
 
     if (isFullFace && isAtInnerPos) {
         // Full wall face — extend the volume
-        if (canExtendVolume(state.volumes, vol, face.axis, face.side, state.pushStep)) {
-            saveUndoState();
-            applyPush(vol, face.axis, face.side, state.pushStep);
-            // Update selectedFace to match the new geometry
-            state.selectedFace = {
-                volumeId: vol.id, axis: face.axis, side: face.side,
-                position: getFacePosition(vol, face.axis, face.side),
-                bounds: getVolumeFaceBounds(vol, face.axis),
-            };
-            rebuildCallback(vol);
-        } else {
-            showMessage('Blocked — collision!');
-        }
+        saveUndoState();
+        applyPush(vol, face.axis, face.side, state.pushStep);
+        // Update selectedFace to match the new geometry
+        state.selectedFace = {
+            volumeId: vol.id, axis: face.axis, side: face.side,
+            position: getFacePosition(vol, face.axis, face.side),
+            bounds: getVolumeFaceBounds(vol, face.axis),
+        };
+        rebuildCallback(vol);
     } else if (!isAtInnerPos) {
         // Sub-face at outer position (exit cap) — create new volume from it
         extrudeFromFace(face, vol, showMessage, rebuildCallback, rebuildAllCallback);
@@ -64,19 +60,15 @@ function extrudeFromFace(face, parentVol, showMessage, rebuildCallback, rebuildA
         // Already connected — extend the connected volume's far face
         const connVol = state.volumes.find(v => v.id === conn.volBId);
         if (!connVol) return;
-        if (canExtendVolume(state.volumes, connVol, axis, side, state.pushStep)) {
-            saveUndoState();
-            applyPush(connVol, axis, side, state.pushStep);
-            // Select the far face of the connected volume so user can keep pushing
-            state.selectedFace = {
-                volumeId: connVol.id, axis, side,
-                position: getFacePosition(connVol, axis, side),
-                bounds: getVolumeFaceBounds(connVol, axis),
-            };
-            rebuildAllCallback();
-        } else {
-            showMessage('Blocked — collision!');
-        }
+        saveUndoState();
+        applyPush(connVol, axis, side, state.pushStep);
+        // Select the far face of the connected volume so user can keep pushing
+        state.selectedFace = {
+            volumeId: connVol.id, axis, side,
+            position: getFacePosition(connVol, axis, side),
+            bounds: getVolumeFaceBounds(connVol, axis),
+        };
+        rebuildAllCallback();
         return;
     }
 
@@ -97,13 +89,6 @@ function extrudeFromFace(face, parentVol, showMessage, rebuildCallback, rebuildA
 
     const newVol = new Volume(state.nextVolumeId++, nx, ny, nz, nw, nh, nd);
     newVol.textureScheme = parentVol.textureScheme;
-
-    if (!canPlaceVolume(state.volumes, newVol)) {
-        state.undoStack.pop();
-        state.nextVolumeId--;
-        showMessage('Blocked — collision!');
-        return;
-    }
 
     // Connect
     if (conn) {
@@ -349,11 +334,6 @@ export function computeExtrudePlacement(vol, axis, side, hitPoint, width, height
     return { u0, u1, v0, v1 };
 }
 
-// Check if two 2D rectangles overlap (bounds in u,v space)
-function boundsOverlap(a, b) {
-    return a.u0 < b.u1 && a.u1 > b.u0 && a.v0 < b.v1 && a.v1 > b.v0;
-}
-
 export function addExtrudeSelection(volumeId, axis, side, hitPoint, showMessage) {
     // Reset if we were in extruded phase
     if (state.extrudePhase === 'extruded') {
@@ -377,16 +357,6 @@ export function addExtrudeSelection(volumeId, axis, side, hitPoint, showMessage)
         return false;
     }
 
-    // Check overlap with other selections on the same face
-    for (const sel of state.extrudeSelections) {
-        if (sel.volumeId === volumeId && sel.axis === axis && sel.side === side) {
-            if (boundsOverlap(bounds, sel.bounds)) {
-                showMessage('Overlaps another selection');
-                return false;
-            }
-        }
-    }
-
     const position = getFacePosition(vol, axis, side);
     state.extrudeSelections.push({ volumeId, axis, side, bounds, position });
     state.extrudePhase = 'selecting';
@@ -404,21 +374,6 @@ function findContainingRoom(vol) {
         }
     }
     return null;
-}
-
-// Check if a protrusion can grow further within its parent's interior
-function canExtendProtrusion(vol, axis, growSide, parentVol) {
-    const step = state.pushStep;
-    if (axis === 'x') {
-        if (growSide === 'max') return vol.x + vol.w + step <= parentVol.x + parentVol.w;
-        else return vol.x - step >= parentVol.x;
-    } else if (axis === 'y') {
-        if (growSide === 'max') return vol.y + vol.h + step <= parentVol.y + parentVol.h;
-        else return vol.y - step >= parentVol.y;
-    } else {
-        if (growSide === 'max') return vol.z + vol.d + step <= parentVol.z + parentVol.d;
-        else return vol.z - step >= parentVol.z;
-    }
 }
 
 export function executeExtrude(showMessage, rebuildAllCallback) {
@@ -474,8 +429,6 @@ export function executeExtrude(showMessage, rebuildAllCallback) {
     // Commit
     saveUndoState();
     state.extrudedVolumes = [];
-    const roomIds = [...new Set(selectionData.map(d => d.room.id))];
-    state.extrudeParentIds = roomIds;
     state.extrudeGrowSide = growSide;
     state.extrudeVolumeParentMap = {};
 
@@ -500,16 +453,6 @@ export function reExtrudeVolumes(pushOrPull, showMessage, rebuildAllCallback) {
     const growSide = state.extrudeGrowSide;
 
     if (pushOrPull === 'push') {
-        // Check each protrusion can grow within its parent's interior
-        for (const volId of state.extrudedVolumes) {
-            const vol = state.volumes.find(v => v.id === volId);
-            const parentVol = state.volumes.find(v => v.id === state.extrudeVolumeParentMap[volId]);
-            if (!vol || !parentVol) continue;
-            if (!canExtendProtrusion(vol, axis, growSide, parentVol)) {
-                showMessage('Blocked — hit opposite wall');
-                return;
-            }
-        }
         saveUndoState();
         for (const volId of state.extrudedVolumes) {
             const vol = state.volumes.find(v => v.id === volId);
@@ -534,49 +477,10 @@ export function reExtrudeVolumes(pushOrPull, showMessage, rebuildAllCallback) {
     }
 }
 
-export function extrudeUntilBlocked(showMessage, rebuildAllCallback) {
-    if (state.extrudePhase !== 'extruded' || state.extrudedVolumes.length === 0) return;
-
-    const { axis } = state.extrudeDirection;
-    const growSide = state.extrudeGrowSide;
-    let steps = 0;
-
-    while (true) {
-        let allClear = true;
-        for (const volId of state.extrudedVolumes) {
-            const vol = state.volumes.find(v => v.id === volId);
-            const parentVol = state.volumes.find(v => v.id === state.extrudeVolumeParentMap[volId]);
-            if (!vol || !parentVol || !canExtendProtrusion(vol, axis, growSide, parentVol)) {
-                allClear = false;
-                break;
-            }
-        }
-        if (!allClear) break;
-
-        if (steps === 0) saveUndoState();
-
-        for (const volId of state.extrudedVolumes) {
-            const vol = state.volumes.find(v => v.id === volId);
-            if (vol) applyPush(vol, axis, growSide, state.pushStep);
-        }
-        steps++;
-
-        if (steps > 200) break;
-    }
-
-    if (steps > 0) {
-        rebuildAllCallback();
-        showMessage(`Extended ${steps * state.pushStep} WT`);
-    } else {
-        showMessage('Already blocked');
-    }
-}
-
 export function clearExtrudeState() {
     state.extrudeSelections = [];
     state.extrudeDirection = null;
     state.extrudedVolumes = [];
-    state.extrudeParentIds = [];
     state.extrudeGrowSide = null;
     state.extrudeVolumeParentMap = {};
     state.extrudePhase = 'idle';

@@ -27,7 +27,6 @@ export const state = {
     extrudeSelections: [],    // Array of { volumeId, axis, side, bounds, position }
     extrudeDirection: null,   // { axis, side } — locked after first selection
     extrudedVolumes: [],      // Array of volumeId — tracks created volumes for re-push
-    extrudeParentIds: [],     // Array of volumeId — parent volumes (excluded from collision)
     extrudeGrowSide: null,    // 'min' | 'max' — the side to push when extending protrusions
     extrudeVolumeParentMap: {},  // { [protrusionId]: parentId }
     extrudePhase: 'idle',     // 'idle' | 'selecting' | 'extruded'

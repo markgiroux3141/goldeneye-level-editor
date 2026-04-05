@@ -11,7 +11,7 @@ import {
     deleteSelectedVolume, undoAction,
     saveLevel, loadLevel,
     executeExtrude, reExtrudeVolumes,
-    extrudeUntilBlocked, clearExtrudeState,
+    clearExtrudeState,
 } from '../actions.js';
 import {
     volumeMeshes, stairRunMeshes,
@@ -36,9 +36,7 @@ export function handleIndoorKey(e, { gizmo, camera }) {
     if (state.tool === 'extrude') {
         if (hotkeyManager.matches('push', e)) {
             e.preventDefault();
-            if (e.shiftKey && state.extrudePhase === 'extruded') {
-                extrudeUntilBlocked(showMessage, rebuildAllVolumes);
-            } else if (state.extrudePhase === 'selecting') {
+            if (state.extrudePhase === 'selecting') {
                 executeExtrude(showMessage, rebuildAllVolumes);
             } else if (state.extrudePhase === 'extruded') {
                 reExtrudeVolumes('push', showMessage, rebuildAllVolumes);
