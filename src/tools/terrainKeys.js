@@ -5,6 +5,7 @@ import { isPointerLocked } from '../input/input.js';
 import { showMessage } from '../hud/hud.js';
 import { gridHelper } from '../scene/setup.js';
 import { hotkeyManager } from '../input/HotkeyManager.js';
+import { MIN_BRUSH_RADIUS, MAX_BRUSH_RADIUS, MIN_BRUSH_STRENGTH, MAX_BRUSH_STRENGTH, MIN_SUBDIVISION, MAX_SUBDIVISION } from '../core/constants.js';
 import { undoAction, saveLevel, loadLevel } from '../actions.js';
 import { rebuildTerrainWalls, terrainMeshes } from '../mesh/MeshManager.js';
 import {
@@ -72,25 +73,25 @@ export function handleTerrainKey(e, { generateTerrainMesh, rebuildAll }) {
     if (state.terrainTool === 'sculpt') {
         if (e.key === '=' || e.key === '+') {
             e.preventDefault();
-            state.brushRadius = Math.min(50, state.brushRadius + 1);
+            state.brushRadius = Math.min(MAX_BRUSH_RADIUS, state.brushRadius + 1);
             showMessage(`Brush radius: ${state.brushRadius}`);
             return;
         }
         if (e.key === '-') {
             e.preventDefault();
-            state.brushRadius = Math.max(1, state.brushRadius - 1);
+            state.brushRadius = Math.max(MIN_BRUSH_RADIUS, state.brushRadius - 1);
             showMessage(`Brush radius: ${state.brushRadius}`);
             return;
         }
         if (e.code === 'BracketRight') {
             e.preventDefault();
-            state.brushStrength = Math.min(1, state.brushStrength + 0.1);
+            state.brushStrength = Math.min(MAX_BRUSH_STRENGTH, state.brushStrength + 0.1);
             showMessage(`Brush strength: ${state.brushStrength.toFixed(1)}`);
             return;
         }
         if (e.code === 'BracketLeft') {
             e.preventDefault();
-            state.brushStrength = Math.max(0.1, state.brushStrength - 0.1);
+            state.brushStrength = Math.max(MIN_BRUSH_STRENGTH, state.brushStrength - 0.1);
             showMessage(`Brush strength: ${state.brushStrength.toFixed(1)}`);
             return;
         }
@@ -102,7 +103,7 @@ export function handleTerrainKey(e, { generateTerrainMesh, rebuildAll }) {
             e.preventDefault();
             const terrain = getActiveTerrain();
             if (terrain) {
-                terrain.subdivisionLevel = Math.min(20, terrain.subdivisionLevel + 1);
+                terrain.subdivisionLevel = Math.min(MAX_SUBDIVISION, terrain.subdivisionLevel + 1);
                 showMessage(`Subdivision: ${terrain.subdivisionLevel}`);
             }
             return;
@@ -111,7 +112,7 @@ export function handleTerrainKey(e, { generateTerrainMesh, rebuildAll }) {
             e.preventDefault();
             const terrain = getActiveTerrain();
             if (terrain) {
-                terrain.subdivisionLevel = Math.max(1, terrain.subdivisionLevel - 1);
+                terrain.subdivisionLevel = Math.max(MIN_SUBDIVISION, terrain.subdivisionLevel - 1);
                 showMessage(`Subdivision: ${terrain.subdivisionLevel}`);
             }
             return;

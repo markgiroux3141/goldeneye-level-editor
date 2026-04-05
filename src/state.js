@@ -5,6 +5,14 @@ import { Platform } from './core/Platform.js';
 import { StairRun } from './core/StairRun.js';
 import { TerrainMap } from './core/TerrainMap.js';
 import { PointLight } from './core/PointLight.js';
+import {
+    DEFAULT_DOOR_WIDTH, DEFAULT_DOOR_HEIGHT, DEFAULT_PUSH_STEP,
+    DEFAULT_PLATFORM_SIZE_X, DEFAULT_PLATFORM_SIZE_Z, DEFAULT_PLATFORM_THICKNESS,
+    DEFAULT_STAIR_WIDTH, DEFAULT_STAIR_STEP_HEIGHT, DEFAULT_STAIR_RISE_OVER_RUN,
+    DEFAULT_EXTRUDE_WIDTH, DEFAULT_EXTRUDE_HEIGHT,
+    DEFAULT_BRUSH_RADIUS, DEFAULT_BRUSH_STRENGTH, DEFAULT_BRUSH_NOISE_SCALE, DEFAULT_BRUSH_NOISE_AMP,
+    DEFAULT_BAKE_AMBIENT, MAX_UNDO,
+} from './core/constants.js';
 
 export const state = {
     volumes: [],
@@ -17,11 +25,11 @@ export const state = {
     nextStairRunId: 1,
     selectedFace: null,     // { volumeId, axis, side, position, bounds: { u0, u1, v0, v1 } }
     tool: 'push_pull',      // 'push_pull' | 'door' | 'extrude' | 'platform'
-    doorWidth: 3,
-    doorHeight: 7,
-    pushStep: 4,
+    doorWidth: DEFAULT_DOOR_WIDTH,
+    doorHeight: DEFAULT_DOOR_HEIGHT,
+    pushStep: DEFAULT_PUSH_STEP,
     undoStack: [],
-    maxUndo: 50,
+    maxUndo: MAX_UNDO,
 
     // Extrude tool state (transient — not serialized or in undo snapshots)
     extrudeSelections: [],    // Array of { volumeId, axis, side, bounds, position }
@@ -30,13 +38,13 @@ export const state = {
     extrudeGrowSide: null,    // 'min' | 'max' — the side to push when extending protrusions
     extrudeVolumeParentMap: {},  // { [protrusionId]: parentId }
     extrudePhase: 'idle',     // 'idle' | 'selecting' | 'extruded'
-    extrudeWidth: 1,
-    extrudeHeight: 1,
+    extrudeWidth: DEFAULT_EXTRUDE_WIDTH,
+    extrudeHeight: DEFAULT_EXTRUDE_HEIGHT,
 
     // Stair settings (shared by platform-connect stairs and simple stairs)
-    stairWidth: 4,
-    stairStepHeight: 1,       // height of each step in WT units
-    stairRiseOverRun: 1,      // rise/run ratio for step proportions (1 = 45°)
+    stairWidth: DEFAULT_STAIR_WIDTH,
+    stairStepHeight: DEFAULT_STAIR_STEP_HEIGHT,
+    stairRiseOverRun: DEFAULT_STAIR_RISE_OVER_RUN,
 
     // Platform tool state (transient — not serialized or in undo snapshots)
     platformPhase: 'idle',    // 'idle' | 'selected' | 'moving' | 'scaling' | 'connecting_dst' | 'connecting_src' | 'simple_stair_from' | 'simple_stair_to'
@@ -47,9 +55,9 @@ export const state = {
     platformConnectFrom: null, // { platformId, edge, offset } — source edge when connecting
     platformConnectTo: null,   // { type: 'ground' } | { type: 'platform', platformId, edge } — destination
     simpleStairFrom: null,     // { x, y, z } — first click point for simple stairs
-    platformSizeX: 4,         // default platform X size for placement
-    platformSizeZ: 4,         // default platform Z size for placement
-    platformThickness: 1,     // default platform thickness
+    platformSizeX: DEFAULT_PLATFORM_SIZE_X,
+    platformSizeZ: DEFAULT_PLATFORM_SIZE_Z,
+    platformThickness: DEFAULT_PLATFORM_THICKNESS,
 
     // Radial menu state (transient)
     radialMenuOpen: false,
@@ -75,10 +83,10 @@ export const state = {
 
     // Brush state (transient)
     brushType: 'raise',        // 'raise' | 'noise' | 'smooth' | 'flatten'
-    brushRadius: 8,            // radius in WT units
-    brushStrength: 0.5,        // 0-1
-    brushNoiseScale: 0.1,      // noise frequency for noise brush
-    brushNoiseAmp: 2,          // noise amplitude for noise brush
+    brushRadius: DEFAULT_BRUSH_RADIUS,
+    brushStrength: DEFAULT_BRUSH_STRENGTH,
+    brushNoiseScale: DEFAULT_BRUSH_NOISE_SCALE,
+    brushNoiseAmp: DEFAULT_BRUSH_NOISE_AMP,
 
     // Point lights (serialized)
     pointLights: [],           // PointLight[]
@@ -91,7 +99,7 @@ export const state = {
     // Baked lighting state (transient)
     bakedLighting: false,
     realtimePreview: false,   // when true, Three.js PointLights are active + scene lights dimmed
-    bakeAmbient: 1.0,         // ambient light level for baking (0-1)
+    bakeAmbient: DEFAULT_BAKE_AMBIENT,
 };
 
 export function saveUndoState() {

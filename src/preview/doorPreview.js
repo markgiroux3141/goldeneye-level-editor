@@ -8,6 +8,7 @@ import { pickFace } from '../raycaster.js';
 import { isPointerLocked } from '../input/input.js';
 import { volumeMeshes } from '../mesh/MeshManager.js';
 import { scene } from '../scene/setup.js';
+import { PREVIEW_OFFSET_DOOR } from '../core/constants.js';
 
 let doorPreviewMesh = null;
 const doorPreviewMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
@@ -33,7 +34,7 @@ export function updateDoorPreview(camera) {
 
     const { u0, u1, v0, v1 } = doorBounds;
     const pos = hit.position;
-    const offset = 0.01;
+    const offset = PREVIEW_OFFSET_DOOR;
     const W = WORLD_SCALE;
 
     let points;

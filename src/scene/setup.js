@@ -1,13 +1,14 @@
 // Three.js scene, renderer, camera, lighting
 
 import * as THREE from 'three';
+import { FOG_NEAR, FOG_FAR, INDOOR_BG_COLOR } from '../core/constants.js';
 
 export let scene, renderer, camera, gridHelper;
 
 export function initScene() {
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1a2e);
-    scene.fog = new THREE.Fog(0x1a1a2e, 30, 80);
+    scene.background = new THREE.Color(INDOOR_BG_COLOR);
+    scene.fog = new THREE.Fog(INDOOR_BG_COLOR, FOG_NEAR, FOG_FAR);
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
     camera.position.set(2, 1.5, 2);

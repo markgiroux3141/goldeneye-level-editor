@@ -1,6 +1,6 @@
 // Volume push/pull operations
 
-const MIN_DIMENSION = 1; // 1 WT minimum
+import { MIN_DIMENSION } from './core/constants.js';
 
 export function applyPush(vol, axis, side, step) {
     const s = step;

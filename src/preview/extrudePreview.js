@@ -8,6 +8,7 @@ import { pickFace } from '../raycaster.js';
 import { isPointerLocked } from '../input/input.js';
 import { volumeMeshes } from '../mesh/MeshManager.js';
 import { scene } from '../scene/setup.js';
+import { PREVIEW_OFFSET_EXTRUDE } from '../core/constants.js';
 
 const extrudePreviewGroup = new THREE.Group();
 let _added = false;
@@ -17,7 +18,7 @@ const extrudeHoverMat = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth
 function makeRectPoints(axis, side, position, bounds) {
     const { u0, u1, v0, v1 } = bounds;
     const W = WORLD_SCALE;
-    const offset = 0.02;
+    const offset = PREVIEW_OFFSET_EXTRUDE;
 
     if (axis === 'x') {
         const px = position * W + (side === 'min' ? offset : -offset);

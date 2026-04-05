@@ -18,6 +18,7 @@ import {
 import { stairRunMeshes } from '../mesh/MeshManager.js';
 import { closestPlatformEdge, closestOffsetOnEdge, projectCrosshairOntoEdge, bestEdgeForDirection } from './platformEdgeUtils.js';
 import { clearPlatformToolState, clearLightToolState } from './ToolManager.js';
+import { DEFAULT_LIGHT_Y_OFFSET } from '../core/constants.js';
 
 export function handleIndoorClick(e, { gizmo, camera }) {
     if (!isPointerLocked() || e.button !== 0) return;
@@ -74,7 +75,7 @@ export function handleIndoorClick(e, { gizmo, camera }) {
         saveUndoState();
         const light = new PointLight(
             state.nextPointLightId++,
-            snapped.x, snapped.y + 4, snapped.z,
+            snapped.x, snapped.y + DEFAULT_LIGHT_Y_OFFSET, snapped.z,
         );
         state.pointLights.push(light);
         rebuildLight(light);

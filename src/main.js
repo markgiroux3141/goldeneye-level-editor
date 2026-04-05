@@ -13,6 +13,7 @@ import { showMessage, updateHUD, initHUD } from './hud/hud.js';
 import { loadFromLocalStorage } from './io/LevelStorage.js';
 import { clearExtrudeState } from './actions.js';
 import { PlatformGizmo } from './gizmo.js';
+import { FOG_NEAR, FOG_FAR, INDOOR_BG_COLOR, TERRAIN_BG_COLOR, TERRAIN_PERSPECTIVE_BG } from './core/constants.js';
 import { createOrthoCamera, updateOrthoCamera, handleOrthoResize } from './terrain/orthographicCamera.js';
 import { updateTerrainNormals } from './geometry/terrainGeometry.js';
 import { applyBrush } from './terrain/terrainBrush.js';
@@ -330,9 +331,9 @@ function animate() {
         // No fog in terrain mode — use appropriate background per camera
         scene.fog = null;
         if (state.terrainCameraMode === 'ortho') {
-            scene.background = new THREE.Color(0x111118);
+            scene.background = new THREE.Color(TERRAIN_BG_COLOR);
         } else {
-            scene.background = new THREE.Color(0x556677); // sky blue-grey for outdoor perspective
+            scene.background = new THREE.Color(TERRAIN_PERSPECTIVE_BG);
         }
 
         renderer.render(scene, activeCamera);
@@ -342,8 +343,8 @@ function animate() {
     // ---- INDOOR MODE FRAME UPDATE ----
     // Restore fog and background for indoor mode
     if (!scene.fog) {
-        scene.fog = new THREE.Fog(0x1a1a2e, 30, 80);
-        scene.background = new THREE.Color(0x1a1a2e);
+        scene.fog = new THREE.Fog(INDOOR_BG_COLOR, FOG_NEAR, FOG_FAR);
+        scene.background = new THREE.Color(INDOOR_BG_COLOR);
     }
 
     // If gizmo is being dragged, consume mouse delta for the gizmo instead of camera

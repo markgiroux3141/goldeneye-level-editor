@@ -1,6 +1,8 @@
 // PointLight — a positionable light source for baked vertex lighting
 // Follows the same pattern as Platform.js
 
+import { DEFAULT_LIGHT_INTENSITY, DEFAULT_LIGHT_RANGE } from './constants.js';
+
 export class PointLight {
     constructor(id, x, y, z) {
         this.id = id;
@@ -8,8 +10,8 @@ export class PointLight {
         this.y = y;            // position Y in WT units
         this.z = z;            // position Z in WT units
         this.color = { r: 1, g: 1, b: 1 };  // normalized 0-1 RGB
-        this.intensity = 5.0;   // brightness multiplier
-        this.range = 20;        // falloff radius in WT units
+        this.intensity = DEFAULT_LIGHT_INTENSITY;
+        this.range = DEFAULT_LIGHT_RANGE;
         this.enabled = true;    // toggle for bake inclusion
     }
 
@@ -27,8 +29,8 @@ export class PointLight {
     static fromJSON(j) {
         const l = new PointLight(j.id, j.x, j.y, j.z);
         l.color = j.color ? { ...j.color } : { r: 1, g: 1, b: 1 };
-        l.intensity = j.intensity ?? 5.0;
-        l.range = j.range ?? 20;
+        l.intensity = j.intensity ?? DEFAULT_LIGHT_INTENSITY;
+        l.range = j.range ?? DEFAULT_LIGHT_RANGE;
         l.enabled = j.enabled ?? true;
         return l;
     }

@@ -4,14 +4,18 @@
 
 import * as THREE from 'three';
 import { WORLD_SCALE } from './core/Volume.js';
+import {
+    GIZMO_ARROW_LENGTH, GIZMO_SHAFT_RADIUS, GIZMO_TIP_LENGTH,
+    GIZMO_TIP_RADIUS, GIZMO_HANDLE_SIZE, GIZMO_DRAG_SENSITIVITY,
+} from './core/constants.js';
 
 const S = WORLD_SCALE;
 
-const ARROW_LENGTH = 3;     // WT units
-const SHAFT_RADIUS = 0.12;  // WT units
-const TIP_LENGTH = 0.7;     // WT units
-const TIP_RADIUS = 0.3;     // WT units
-const HANDLE_SIZE = 0.4;    // WT units (scale handle cube)
+const ARROW_LENGTH = GIZMO_ARROW_LENGTH;
+const SHAFT_RADIUS = GIZMO_SHAFT_RADIUS;
+const TIP_LENGTH = GIZMO_TIP_LENGTH;
+const TIP_RADIUS = GIZMO_TIP_RADIUS;
+const HANDLE_SIZE = GIZMO_HANDLE_SIZE;
 
 const AXIS_COLORS = {
     x: 0xee3333,
@@ -227,7 +231,7 @@ export class PlatformGizmo {
             (hasDimensions ? platform.centerZ : platform.z) * S,
         );
         const dist = Math.max(0.5, camera.position.distanceTo(targetCenter));
-        const sensitivity = dist * 0.008;
+        const sensitivity = dist * GIZMO_DRAG_SENSITIVITY;
 
         // Accumulate drag
         this.drag.accumulated += (dx * projX - dy * projY) * sensitivity;
