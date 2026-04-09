@@ -1,5 +1,12 @@
 // Centralized constants — magic numbers extracted from across the codebase
-// Note: WALL_THICKNESS and WORLD_SCALE remain in Volume.js (widely imported)
+
+// Core units
+export const WALL_THICKNESS = 1;    // 1 WT = the fundamental unit
+export const WORLD_SCALE = 0.25;    // 1 WT = 0.25 Three.js meters
+
+// CSG texturing
+export const WALL_SPLIT_V = 4;      // WT height where lower wall meets upper wall
+export const CSG_CENTROID_TOL = 0.5; // tolerance (WT) for face identity recovery
 
 // Editor defaults
 export const DEFAULT_DOOR_WIDTH = 3;

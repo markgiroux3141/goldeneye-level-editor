@@ -4,8 +4,10 @@ import { WORLD_SCALE } from '../core/Volume.js';
 import { state, saveUndoState } from '../state.js';
 import { isPointerLocked } from '../input/input.js';
 import { showMessage } from '../hud/hud.js';
-import { pickFace, pickPlatform, pickStairRun, pickLight, pickAny } from '../raycaster.js';
+import { pickFace, pickCSGFace, pickPlatform, pickStairRun, pickLight, pickAny } from '../raycaster.js';
 import { addExtrudeSelection, clearExtrudeState, placeDoorOnFace, snapToWTGrid } from '../actions.js';
+import { selectFaceAtCrosshair, confirmHolePlacement } from '../csg/csgActions.js';
+import { csgRegionMeshes } from '../mesh/csgMesh.js';
 import { Platform } from '../core/Platform.js';
 import { StairRun } from '../core/StairRun.js';
 import { PointLight } from '../core/PointLight.js';
@@ -22,6 +24,18 @@ import { DEFAULT_LIGHT_Y_OFFSET } from '../core/constants.js';
 
 export function handleIndoorClick(e, { gizmo, camera }) {
     if (!isPointerLocked() || e.button !== 0) return;
+
+    // CSG tool — click selects faces; in hole mode, click confirms placement
+    if (state.tool === 'csg') {
+        if (state.csg.holeMode) {
+            saveUndoState();
+            confirmHolePlacement();
+            return;
+        }
+        const csgHit = pickCSGFace(camera, csgRegionMeshes);
+        selectFaceAtCrosshair(csgHit);
+        return;
+    }
 
     const hit = pickFace(camera, volumeMeshes);
 

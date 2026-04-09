@@ -42,6 +42,47 @@ export function pickFace(camera, volumeMeshes) {
     return null;
 }
 
+// Pick a CSG region face under the crosshair
+// csgRegionMeshes: Map<regionId, { mesh, faceIds, ... }>
+// Returns: { regionId, brushId, axis, side, position, point } | null
+export function pickCSGFace(camera, csgRegionMeshes) {
+    raycaster.setFromCamera(screenCenter, camera);
+
+    const meshes = [];
+    for (const [, data] of csgRegionMeshes) {
+        meshes.push(data.mesh);
+    }
+
+    const hits = raycaster.intersectObjects(meshes, false);
+    if (hits.length === 0) return null;
+
+    const hit = hits[0];
+    const mesh = hit.object;
+
+    let faceIds = null;
+    let regionId = null;
+    for (const [id, data] of csgRegionMeshes) {
+        if (data.mesh === mesh) {
+            faceIds = data.faceIds;
+            regionId = id;
+            break;
+        }
+    }
+
+    if (!faceIds) return null;
+
+    const triIndex = hit.faceIndex;
+    if (triIndex >= 0 && triIndex < faceIds.length) {
+        return {
+            regionId,
+            ...faceIds[triIndex],
+            point: hit.point,
+        };
+    }
+
+    return null;
+}
+
 // Pick a platform mesh under the crosshair
 // platformMeshes: Map<platformId, THREE.Mesh>
 export function pickPlatform(camera, platformMeshes) {
@@ -113,7 +154,7 @@ export function pickLight(camera, pickTargets) {
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // Y=0 ground plane
 const groundIntersect = new THREE.Vector3();
 
-export function pickAny(camera, volumeMeshes, platformMeshes, lightPickTargets) {
+export function pickAny(camera, volumeMeshes, platformMeshes, lightPickTargets, csgRegionMeshes = null) {
     raycaster.setFromCamera(screenCenter, camera);
 
     const allMeshes = [];
@@ -121,6 +162,9 @@ export function pickAny(camera, volumeMeshes, platformMeshes, lightPickTargets) 
     for (const [, mesh] of platformMeshes) allMeshes.push(mesh);
     if (lightPickTargets) {
         for (const mesh of lightPickTargets) allMeshes.push(mesh);
+    }
+    if (csgRegionMeshes) {
+        for (const [, data] of csgRegionMeshes) allMeshes.push(data.mesh);
     }
 
     const hits = raycaster.intersectObjects(allMeshes, false);
@@ -151,6 +195,21 @@ export function pickAny(camera, volumeMeshes, platformMeshes, lightPickTargets) 
     // Check if it's a platform
     if (mesh.userData.platformId != null) {
         return { type: 'platform', platformId: mesh.userData.platformId, point: hit.point };
+    }
+
+    // Check if it's a CSG region mesh
+    if (csgRegionMeshes && mesh.userData.isCSG) {
+        let faceIds = null;
+        let regionId = null;
+        for (const [id, data] of csgRegionMeshes) {
+            if (data.mesh === mesh) { faceIds = data.faceIds; regionId = id; break; }
+        }
+        if (faceIds) {
+            const triIndex = hit.faceIndex;
+            if (triIndex >= 0 && triIndex < faceIds.length) {
+                return { type: 'csg', regionId, ...faceIds[triIndex], point: hit.point };
+            }
+        }
     }
 
     // Check if it's a volume

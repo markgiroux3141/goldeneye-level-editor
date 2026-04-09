@@ -157,6 +157,25 @@ export function getTexturedMaterialArray() {
     return getTexturedMaterialArrayForScheme('facility_white_tile');
 }
 
+// ─── CSG materials bridge ────────────────────────────────────────────
+// CSG meshes call getCSGMaterialsForScheme(name) once per unique scheme
+// per rebuild. We cache the result so successive rebuilds reuse the same
+// THREE.Material instances (which are safe to share across meshes).
+const csgSchemeCache = new Map();
+
+export function getCSGMaterialsForScheme(schemeName) {
+    if (!csgSchemeCache.has(schemeName)) {
+        csgSchemeCache.set(schemeName, getTexturedMaterialArrayForScheme(schemeName));
+    }
+    return csgSchemeCache.get(schemeName);
+}
+
+// Clear the CSG material cache. Call this if texture schemes are reloaded
+// (e.g., during dev) to force fresh materials on the next CSG rebuild.
+export function clearCSGMaterialCache() {
+    csgSchemeCache.clear();
+}
+
 // Double-sided alpha-tested material for railings.
 // The railing BMP is converted to RGBA during init (black → transparent).
 export function getRailingMaterial() {

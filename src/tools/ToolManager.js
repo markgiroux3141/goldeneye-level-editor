@@ -7,8 +7,8 @@ import { clearExtrudeState } from '../actions.js';
 import { setIndoorMeshesVisible } from '../mesh/MeshManager.js';
 import { TerrainMap } from '../core/TerrainMap.js';
 
-const TOOL_CYCLE = ['push_pull', 'door', 'extrude', 'platform', 'light'];
-const TOOL_NAMES = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', platform: 'Platform', light: 'Light' };
+const TOOL_CYCLE = ['push_pull', 'door', 'extrude', 'platform', 'light', 'csg'];
+const TOOL_NAMES = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', platform: 'Platform', light: 'Light', csg: 'CSG' };
 const TERRAIN_TOOL_CYCLE = ['boundary', 'hole', 'edit', 'sculpt'];
 const TERRAIN_TOOL_NAMES = { boundary: 'Boundary', hole: 'Hole', edit: 'Edit', sculpt: 'Sculpt' };
 const BRUSH_CYCLE = ['raise', 'noise', 'smooth', 'flatten'];

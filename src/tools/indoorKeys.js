@@ -13,6 +13,7 @@ import {
     executeExtrude, reExtrudeVolumes,
     clearExtrudeState,
 } from '../actions.js';
+import * as csgActions from '../csg/csgActions.js';
 import {
     volumeMeshes, stairRunMeshes,
     rebuildVolume, rebuildAllVolumes, removeVolumeMesh,
@@ -21,6 +22,7 @@ import {
     rebuildAll, removePlatformMesh,
     rebuildLight, removeLightMesh, updateLightSelection,
     setAllWireframeVisible,
+    rebuildAllCSG,
 } from '../mesh/MeshManager.js';
 import { toggleEditorMode, cycleToolForward, clearPlatformToolState, clearLightToolState } from './ToolManager.js';
 
@@ -30,6 +32,99 @@ export function handleIndoorKey(e, { gizmo, camera }) {
         e.preventDefault();
         toggleEditorMode();
         return;
+    }
+
+    // ─── CSG tool keys ──────────────────────────────────────────────
+    if (state.tool === 'csg' && isPointerLocked()) {
+        // Push/pull (also handles extrude continuation when activeOp === 'extrude')
+        if (hotkeyManager.matches('push', e)) {
+            e.preventDefault();
+            if (!csgActions.growActiveExtrude()) {
+                saveUndoState();
+                csgActions.pushSelectedFace();
+            }
+            return;
+        }
+        if (hotkeyManager.matches('pull', e)) {
+            e.preventDefault();
+            saveUndoState();
+            csgActions.pullSelectedFace();
+            return;
+        }
+        // E = extrude selected face
+        if (e.code === 'KeyE') {
+            e.preventDefault();
+            saveUndoState();
+            csgActions.extrudeSelectedFace();
+            return;
+        }
+        // T = hole mode, Shift+T = door mode
+        if (e.code === 'KeyT') {
+            e.preventDefault();
+            csgActions.toggleHoleMode(e.shiftKey);
+            showMessage(state.csg.holeMode
+                ? (state.csg.holeDoor ? 'DOOR mode — click a wall' : 'HOLE mode — click any face')
+                : 'Hole/door mode off');
+            return;
+        }
+        // B = bake current region
+        if (e.code === 'KeyB') {
+            e.preventDefault();
+            saveUndoState();
+            csgActions.bakeCurrentRegion();
+            showMessage('Baked');
+            return;
+        }
+        // [ / ] = scale (taper) selected face
+        if (e.code === 'BracketLeft') {
+            e.preventDefault();
+            saveUndoState();
+            if (e.shiftKey) csgActions.scaleSelectedFace(1, 0);
+            else if (e.ctrlKey) csgActions.scaleSelectedFace(0, 1);
+            else csgActions.scaleSelectedFace(1, 1);
+            return;
+        }
+        if (e.code === 'BracketRight') {
+            e.preventDefault();
+            saveUndoState();
+            if (e.shiftKey) csgActions.scaleSelectedFace(-1, 0);
+            else if (e.ctrlKey) csgActions.scaleSelectedFace(0, -1);
+            else csgActions.scaleSelectedFace(-1, -1);
+            return;
+        }
+        // Number keys: retexture room
+        if (e.key >= '1' && e.key <= '9') {
+            const schemeName = getSchemeByKey(e.key);
+            if (schemeName && state.csg.selectedFace) {
+                e.preventDefault();
+                saveUndoState();
+                csgActions.retextureRoom(schemeName);
+                showMessage('Scheme: ' + (TEXTURE_SCHEMES[schemeName]?.label || schemeName));
+                return;
+            }
+        }
+        // Delete = remove selected brush
+        if ((hotkeyManager.matches('delete', e) || e.key === 'Delete') && state.csg.selectedFace) {
+            e.preventDefault();
+            saveUndoState();
+            csgActions.deleteSelectedBrush();
+            return;
+        }
+        // Escape = cancel hole mode or deselect
+        if (hotkeyManager.matches('escape', e)) {
+            e.preventDefault();
+            if (state.csg.holeMode) {
+                csgActions.exitHoleMode();
+                showMessage('Hole mode cancelled');
+            } else {
+                state.csg.selectedFace = null;
+                state.csg.activeBrush = null;
+                state.csg.activeOp = null;
+                state.csg.activeSide = null;
+            }
+            return;
+        }
+        // Fall through to global keys (cycle_tool, undo, save, load, view toggles)
     }
 
     // Extrude tool: +/- for extrude/shrink, Shift++ for extrude until blocked
@@ -249,6 +344,7 @@ export function handleIndoorKey(e, { gizmo, camera }) {
         e.preventDefault();
         state.viewMode = state.viewMode === 'grid' ? 'textured' : 'grid';
         showMessage('View: ' + (state.viewMode === 'grid' ? 'Grid' : 'Textured'));
+        rebuildAllCSG();
         rebuildAllVolumes();
         rebuildAllPlatforms();
         rebuildAllStairRuns();

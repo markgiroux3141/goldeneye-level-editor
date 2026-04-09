@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>three-bvh-csg compatibility test</title>
+    <style>
+        body { margin: 0; background: #1a1a2e; color: #fff; font-family: monospace; padding: 20px; }
+        #log { white-space: pre-wrap; font-size: 13px; line-height: 1.5; max-width: 800px; }
+        .ok { color: #4f4; }
+        .fail { color: #f44; }
+        .info { color: #aaa; }
+        canvas { display: block; margin-top: 20px; border: 1px solid #444; }
+    </style>
+</head>
+<body>
+    <h2>three-bvh-csg × three.js 0.166.1 compatibility test</h2>
+    <div id="log"></div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/",
+            "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.8/src/index.js",
+            "three-bvh-csg": "https://cdn.jsdelivr.net/npm/three-bvh-csg@0.0.16/src/index.js"
+        }
+    }
+    </script>
+    <script type="module">
+        const log = document.getElementById('log');
+        function line(msg, cls = 'info') {
+            const span = document.createElement('div');
+            span.className = cls;
+            span.textContent = msg;
+            log.appendChild(span);
+            console.log(msg);
+        }
+
+        window.addEventListener('error', e => {
+            line('UNCAUGHT ERROR: ' + e.message, 'fail');
+            if (e.error && e.error.stack) line(e.error.stack, 'fail');
+        });
+
+        try {
+            line('Step 1: Importing three.js 0.166.1...');
+            const THREE = await import('three');
+            line('  OK — THREE.REVISION = ' + THREE.REVISION, 'ok');
+
+            line('Step 2: Importing three-mesh-bvh 0.7.8...');
+            const bvh = await import('three-mesh-bvh');
+            line('  OK — exports: ' + Object.keys(bvh).slice(0, 8).join(', ') + '...', 'ok');
+
+            line('Step 3: Importing three-bvh-csg 0.0.16...');
+            const csg = await import('three-bvh-csg');
+            line('  OK — exports: ' + Object.keys(csg).join(', '), 'ok');
+
+            const { Evaluator, Brush, ADDITION, SUBTRACTION } = csg;
+            line('  Evaluator: ' + (typeof Evaluator), 'ok');
+            line('  Brush: ' + (typeof Brush), 'ok');
+            line('  SUBTRACTION: ' + SUBTRACTION, 'ok');
+
+            line('Step 4: Creating two boxes (one big, one small)...');
+            const bigGeo = new THREE.BoxGeometry(4, 4, 4);
+            const smallGeo = new THREE.BoxGeometry(2, 2, 2);
+            const bigBrush = new Brush(bigGeo);
+            const smallBrush = new Brush(smallGeo);
+            smallBrush.position.set(1, 1, 1);
+            bigBrush.updateMatrixWorld();
+            smallBrush.updateMatrixWorld();
+            line('  OK — brushes constructed', 'ok');
+
+            line('Step 5: Running CSG SUBTRACTION (big - small)...');
+            const evaluator = new Evaluator();
+            const t0 = performance.now();
+            const result = evaluator.evaluate(bigBrush, smallBrush, SUBTRACTION);
+            const elapsed = performance.now() - t0;
+            line(`  OK — eval took ${elapsed.toFixed(2)}ms`, 'ok');
+            line('  result.geometry: ' + (result.geometry ? 'present' : 'MISSING'), result.geometry ? 'ok' : 'fail');
+            if (result.geometry) {
+                const pos = result.geometry.getAttribute('position');
+                const idx = result.geometry.index;
+                line('  vertices: ' + pos.count, 'ok');
+                line('  triangles: ' + (idx ? idx.count / 3 : pos.count / 3), 'ok');
+                line('  has normals: ' + !!result.geometry.getAttribute('normal'), 'ok');
+            }
+
+            line('Step 6: Running CSG ADDITION as a second op...');
+            const thirdGeo = new THREE.BoxGeometry(1, 1, 1);
+            const thirdBrush = new Brush(thirdGeo);
+            thirdBrush.position.set(-2, -2, -2);
+            thirdBrush.updateMatrixWorld();
+            const result2 = evaluator.evaluate(result, thirdBrush, ADDITION);
+            line('  OK — chained eval succeeded', 'ok');
+            line('  result2 vertices: ' + result2.geometry.getAttribute('position').count, 'ok');
+
+            line('Step 7: Rendering result in a small canvas to confirm visual integrity...');
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+            camera.position.set(8, 8, 8);
+            camera.lookAt(0, 0, 0);
+            scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+            dirLight.position.set(5, 10, 5);
+            scene.add(dirLight);
+            const mat = new THREE.MeshLambertMaterial({ color: 0x88aaff, side: THREE.DoubleSide });
+            const mesh = new THREE.Mesh(result2.geometry, mat);
+            scene.add(mesh);
+            const renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(400, 400);
+            document.body.appendChild(renderer.domElement);
+            renderer.render(scene, camera);
+            line('  OK — render completed without errors', 'ok');
+
+            line('');
+            line('=== ALL TESTS PASSED ===', 'ok');
+            line('three-bvh-csg 0.0.16 is compatible with three.js 0.166.1.', 'ok');
+            line('Safe to proceed with the integration plan as written.', 'ok');
+        } catch (err) {
+            line('');
+            line('=== TEST FAILED ===', 'fail');
+            line('Error: ' + err.message, 'fail');
+            if (err.stack) line(err.stack, 'fail');
+            line('');
+            line('Recommendation: try bumping three.js to 0.179.0 + three-bvh-csg 0.0.18,', 'info');
+            line('or pinning three.js to 0.158.0 to match the spike.', 'info');
+        }
+    </script>
+</body>
+</html>

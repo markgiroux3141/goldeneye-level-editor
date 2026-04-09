@@ -5,6 +5,7 @@ import { platformMeshes, rebuildAllPlatforms } from './platformMesh.js';
 import { stairRunMeshes, rebuildAllStairRuns } from './stairRunMesh.js';
 import { rebuildAllTerrain } from './terrainMesh.js';
 import { lightMeshes, rebuildAllLights } from './lightMesh.js';
+import { csgRegionMeshes, rebuildAllCSG } from './csgMesh.js';
 
 // Re-export mesh Maps for external access (raycasting, previews, etc.)
 export { volumeMeshes } from './volumeMesh.js';
@@ -12,6 +13,7 @@ export { platformMeshes } from './platformMesh.js';
 export { stairRunMeshes } from './stairRunMesh.js';
 export { terrainMeshes, terrainWallMeshes } from './terrainMesh.js';
 export { lightMeshes } from './lightMesh.js';
+export { csgRegionMeshes } from './csgMesh.js';
 
 // Re-export individual rebuild/remove functions
 export { rebuildVolume, rebuildAllVolumes, removeVolumeMesh } from './volumeMesh.js';
@@ -19,9 +21,12 @@ export { rebuildPlatform, rebuildAllPlatforms, removePlatformMesh } from './plat
 export { rebuildStairRun, rebuildAllStairRuns, rebuildConnectedStairRuns } from './stairRunMesh.js';
 export { rebuildTerrainMesh, rebuildTerrainWalls, rebuildAllTerrain, generateTerrainMesh } from './terrainMesh.js';
 export { rebuildLight, rebuildAllLights, removeLightMesh, updateLightSelection, getLightPickTargets, setRealtimePreview } from './lightMesh.js';
+export { rebuildAllCSG, rebuildAffectedRegions, removeCSGRegion } from './csgMesh.js';
 
-// Rebuild everything (volumes + platforms + stair runs + terrain + lights) — used for undo/load
+// Rebuild everything (CSG + volumes + platforms + stair runs + terrain + lights) — used for undo/load
+// CSG runs first so platform/stair placement raycasts (Phase 5) can hit it.
 export function rebuildAll() {
+    rebuildAllCSG();
     rebuildAllVolumes();
     rebuildAllPlatforms();
     rebuildAllStairRuns();
@@ -29,8 +34,9 @@ export function rebuildAll() {
     rebuildAllLights();
 }
 
-// Toggle visibility of all indoor meshes (volumes + platforms + stair runs + lights)
+// Toggle visibility of all indoor meshes (CSG + volumes + platforms + stair runs + lights)
 export function setIndoorMeshesVisible(visible) {
+    for (const [, data] of csgRegionMeshes) data.mesh.visible = visible;
     for (const [, data] of volumeMeshes) data.mesh.visible = visible;
     for (const [, mesh] of platformMeshes) mesh.visible = visible;
     for (const [, mesh] of stairRunMeshes) mesh.visible = visible;
@@ -44,6 +50,7 @@ export function setAllWireframeVisible(visible) {
             if (child.isLineSegments) child.visible = visible;
         }
     }
+    for (const [, data] of csgRegionMeshes) setWireframe(data.mesh);
     for (const [, data] of volumeMeshes) setWireframe(data.mesh);
     for (const [, mesh] of platformMeshes) setWireframe(mesh);
     for (const [, mesh] of stairRunMeshes) setWireframe(mesh);

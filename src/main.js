@@ -20,11 +20,14 @@ import { applyBrush } from './terrain/terrainBrush.js';
 import { RadialMenu } from './ui/RadialMenu.js';
 import { buildMenuTree } from './ui/menuConfig.js';
 import { initMenuActions } from './ui/menuActions.js';
-import { terrainMeshes, rebuildVolume, rebuildPlatform, rebuildConnectedStairRuns, rebuildTerrainWalls, generateTerrainMesh, rebuildAll, rebuildLight, setRealtimePreview } from './mesh/MeshManager.js';
+import { terrainMeshes, rebuildVolume, rebuildPlatform, rebuildConnectedStairRuns, rebuildTerrainWalls, generateTerrainMesh, rebuildAll, rebuildLight, setRealtimePreview, rebuildAllCSG } from './mesh/MeshManager.js';
+import { BrushDef } from './core/BrushDef.js';
 import { updateDoorPreview } from './preview/doorPreview.js';
 import { updateExtrudePreview } from './preview/extrudePreview.js';
 import { updatePlatformPreview } from './preview/platformPreview.js';
 import { updateTerrainPreview } from './preview/terrainPreview.js';
+import { updateCSGSelectionPreview, updateCSGHolePreview } from './preview/csgPreviews.js';
+import * as csgActions from './csg/csgActions.js';
 import { updateTerrainHUD } from './hud/terrainHud.js';
 import { initToolManager, clearPlatformToolState, clearLightToolState, toggleEditorMode, getActiveTerrain } from './tools/ToolManager.js';
 import { bakeAllLighting, clearBakedLighting } from './lighting/lightBaker.js';
@@ -89,7 +92,14 @@ document.addEventListener('mousemove', (e) => {
     if (state.editorMode === 'terrain') handleTerrainMouseMove(e);
 });
 document.addEventListener('wheel', (e) => {
-    if (state.editorMode === 'terrain') handleTerrainWheel(e);
+    if (state.editorMode === 'terrain') { handleTerrainWheel(e); return; }
+    // CSG tool: scroll adjusts selection U size, Shift+scroll adjusts V size
+    if (state.tool === 'csg' && isPointerLocked() && state.csg.selectedFace) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -1 : 1;
+        if (e.shiftKey) csgActions.adjustSelectionSize(0, delta);
+        else csgActions.adjustSelectionSize(delta, 0);
+    }
 }, { passive: false });
 
 // Handle ortho resize
@@ -167,6 +177,13 @@ onKeyDown((e) => {
             const firstVolume = new Volume(state.nextVolumeId++, 0, 0, 0, 16, 12, 16);
             state.volumes.push(firstVolume);
             rebuildVolume(firstVolume);
+
+            // Bootstrap a CSG brush offset from the volume so both systems are visible at once.
+            // Pick the CSG tool to interact with this room (T to cycle tools).
+            const firstBrush = new BrushDef(state.csg.nextBrushId++, 'subtract', 24, 0, 0, 16, 12, 16);
+            state.csg.brushes.push(firstBrush);
+            rebuildAllCSG();
+
             renderer.domElement.requestPointerLock();
         }
 
@@ -379,6 +396,8 @@ function animate() {
     updateDoorPreview(camera);
     updateExtrudePreview(camera);
     updatePlatformPreview(camera);
+    updateCSGSelectionPreview(camera);
+    updateCSGHolePreview(camera);
     updateHUD(camera);
     renderer.render(scene, camera);
 }

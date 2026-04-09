@@ -5,6 +5,7 @@ import { Platform } from './core/Platform.js';
 import { StairRun } from './core/StairRun.js';
 import { TerrainMap } from './core/TerrainMap.js';
 import { PointLight } from './core/PointLight.js';
+import { BrushDef } from './core/BrushDef.js';
 import {
     DEFAULT_DOOR_WIDTH, DEFAULT_DOOR_HEIGHT, DEFAULT_PUSH_STEP,
     DEFAULT_PLATFORM_SIZE_X, DEFAULT_PLATFORM_SIZE_Z, DEFAULT_PLATFORM_THICKNESS,
@@ -23,6 +24,28 @@ export const state = {
     nextConnectionId: 1,
     nextPlatformId: 1,
     nextStairRunId: 1,
+
+    // ─── CSG brush system (Phase 3+) ──────────────────────────────────
+    // Lives alongside the legacy volumes/connections during the migration.
+    // Phase 5/6 will swap callers and remove the legacy fields above.
+    csg: {
+        brushes: [],            // BrushDef[] (un-baked)
+        nextBrushId: 1,
+        totalBakedBrushes: 0,
+        // Selection
+        selectedFace: null,     // { regionId, brushId, axis, side, position }
+        selSizeU: 0, selSizeV: 0,  // 0 = full face
+        selU0: 0, selU1: 0, selV0: 0, selV1: 0,  // computed each frame
+        // Active push/pull/extrude tracking
+        activeBrush: null,      // BrushDef being grown by consecutive +/- presses
+        activeOp: null,         // 'push' | 'pull' | 'extrude'
+        activeSide: null,       // 'min' | 'max' — original face side
+        // Hole/door modal tool state
+        holeMode: false,
+        holeDoor: false,
+        doorPreview: null,      // { face, u0, u1, v0, v1 }
+    },
+
     selectedFace: null,     // { volumeId, axis, side, position, bounds: { u0, u1, v0, v1 } }
     tool: 'push_pull',      // 'push_pull' | 'door' | 'extrude' | 'platform'
     doorWidth: DEFAULT_DOOR_WIDTH,
@@ -110,6 +133,8 @@ export function saveUndoState() {
         stairRuns: state.stairRuns.map(r => r.toJSON()),
         terrainMaps: state.terrainMaps.map(t => t.toJSON()),
         pointLights: state.pointLights.map(l => l.toJSON()),
+        csgBrushes: state.csg.brushes.map(b => b.toJSON()),
+        nextBrushId: state.csg.nextBrushId,
     });
     state.undoStack.push(snapshot);
     if (state.undoStack.length > state.maxUndo) state.undoStack.shift();
@@ -130,6 +155,12 @@ export function undo() {
     state.stairRuns = (snapshot.stairRuns || []).map(j => StairRun.fromJSON(j));
     state.terrainMaps = (snapshot.terrainMaps || []).map(j => TerrainMap.fromJSON(j));
     state.pointLights = (snapshot.pointLights || []).map(j => PointLight.fromJSON(j));
+    state.csg.brushes = (snapshot.csgBrushes || []).map(j => BrushDef.fromJSON(j));
+    state.csg.nextBrushId = snapshot.nextBrushId || (Math.max(...state.csg.brushes.map(b => b.id), 0) + 1);
+    state.csg.selectedFace = null;
+    state.csg.activeBrush = null;
+    state.csg.activeOp = null;
+    state.csg.activeSide = null;
     state.nextVolumeId = Math.max(...state.volumes.map(v => v.id), 0) + 1;
     state.nextConnectionId = Math.max(...state.connections.map(c => c.id), 0) + 1;
     state.nextPlatformId = Math.max(...state.platforms.map(p => p.id), 0) + 1;
@@ -153,6 +184,9 @@ export function serializeLevel() {
         stairRuns: state.stairRuns.map(r => r.toJSON()),
         terrainMaps: state.terrainMaps.map(t => t.toJSON()),
         pointLights: state.pointLights.map(l => l.toJSON()),
+        csgBrushes: state.csg.brushes.map(b => b.toJSON()),
+        nextBrushId: state.csg.nextBrushId,
+        totalBakedBrushes: state.csg.totalBakedBrushes,
         nextVolumeId: state.nextVolumeId,
         nextConnectionId: state.nextConnectionId,
         nextPlatformId: state.nextPlatformId,
@@ -172,6 +206,13 @@ export function deserializeLevel(json) {
     state.stairRuns = (data.stairRuns || []).map(j => StairRun.fromJSON(j));
     state.terrainMaps = (data.terrainMaps || []).map(j => TerrainMap.fromJSON(j));
     state.pointLights = (data.pointLights || []).map(j => PointLight.fromJSON(j));
+    state.csg.brushes = (data.csgBrushes || []).map(j => BrushDef.fromJSON(j));
+    state.csg.nextBrushId = data.nextBrushId || (Math.max(...state.csg.brushes.map(b => b.id), 0) + 1);
+    state.csg.totalBakedBrushes = data.totalBakedBrushes || 0;
+    state.csg.selectedFace = null;
+    state.csg.activeBrush = null;
+    state.csg.activeOp = null;
+    state.csg.activeSide = null;
     state.nextVolumeId = data.nextVolumeId || (Math.max(...state.volumes.map(v => v.id), 0) + 1);
     state.nextConnectionId = data.nextConnectionId || (Math.max(...state.connections.map(c => c.id), 0) + 1);
     state.nextPlatformId = data.nextPlatformId || (Math.max(...state.platforms.map(p => p.id), 0) + 1);

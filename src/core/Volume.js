@@ -1,8 +1,11 @@
 // Volume — an axis-aligned rectangular box of interior space
 // The level is made of connected volumes. No "room" concept.
 
-export const WALL_THICKNESS = 1;    // 1 WT = the fundamental unit
-export const WORLD_SCALE = 0.25;    // 1 WT = 0.25 Three.js meters
+import { WALL_THICKNESS, WORLD_SCALE } from './constants.js';
+
+// Re-export so existing import sites (`import { WALL_THICKNESS } from './core/Volume.js'`)
+// keep working until Phase 6 deletes this file and repoints them to constants.js.
+export { WALL_THICKNESS, WORLD_SCALE };
 
 export class Volume {
     constructor(id, x, y, z, w, h, d) {

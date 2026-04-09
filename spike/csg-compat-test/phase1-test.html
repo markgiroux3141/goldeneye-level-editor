@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <base href="/">
+    <title>Phase 1 CSG modules integration test</title>
+    <style>
+        body { margin: 0; background: #1a1a2e; color: #fff; font-family: monospace; padding: 20px; }
+        #log { white-space: pre-wrap; font-size: 13px; line-height: 1.5; max-width: 900px; }
+        .ok { color: #4f4; }
+        .fail { color: #f44; }
+        .info { color: #aaa; }
+    </style>
+</head>
+<body>
+    <h2>Phase 1 — CSG core modules integration test</h2>
+    <div id="log"></div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/",
+            "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.8/src/index.js",
+            "three-bvh-csg": "https://cdn.jsdelivr.net/npm/three-bvh-csg@0.0.16/src/index.js"
+        }
+    }
+    </script>
+    <script type="module">
+        const log = document.getElementById('log');
+        function line(msg, cls = 'info') {
+            const span = document.createElement('div');
+            span.className = cls;
+            span.textContent = msg;
+            log.appendChild(span);
+            console.log(msg);
+        }
+
+        window.addEventListener('error', e => {
+            line('UNCAUGHT ERROR: ' + e.message, 'fail');
+            if (e.error && e.error.stack) line(e.error.stack, 'fail');
+        });
+
+        try {
+            line('Step 1: Importing Phase 1 modules...');
+            const { BrushDef } = await import('/src/core/BrushDef.js');
+            const { buildFaceMap } = await import('/src/core/csg/faceMap.js');
+            const { assignUVsAndZones } = await import('/src/core/csg/uvZones.js');
+            const { CSGRegion } = await import('/src/core/csg/CSGRegion.js');
+            const { clusterBrushes, brushesTouching, findRoomBrushes } = await import('/src/core/csg/regions.js');
+            line('  OK — all five modules imported', 'ok');
+
+            line('Step 2: Construct two BrushDefs (a 16x8x16 room and a 6x6x6 alcove touching it)...');
+            const room = new BrushDef(1, 'subtract', 0, 0, 0, 16, 8, 16);
+            const alcove = new BrushDef(2, 'subtract', 16, 0, 4, 6, 6, 6); // touches room on x=16
+            line('  room.minX=' + room.minX + ' room.maxX=' + room.maxX, 'ok');
+            line('  alcove.minX=' + alcove.minX + ' alcove.maxX=' + alcove.maxX, 'ok');
+
+            line('Step 3: brushesTouching(room, alcove) = ' + brushesTouching(room, alcove), 'ok');
+            if (!brushesTouching(room, alcove)) {
+                line('  WARNING: expected true (they share x=16 face)', 'fail');
+            }
+
+            line('Step 4: clusterBrushes([room, alcove])...');
+            const regions = clusterBrushes([room, alcove]);
+            line('  region count: ' + regions.length, regions.length === 1 ? 'ok' : 'fail');
+            line('  region[0].brushes.length: ' + regions[0].brushes.length, 'ok');
+            line('  region[0].shell: x=' + regions[0].shell.x + ' w=' + regions[0].shell.w, 'ok');
+
+            line('Step 5: Construct a disconnected third brush, expect 2 regions...');
+            const isolated = new BrushDef(3, 'subtract', 50, 0, 50, 4, 4, 4);
+            const regions2 = clusterBrushes([room, alcove, isolated]);
+            line('  region count: ' + regions2.length, regions2.length === 2 ? 'ok' : 'fail');
+
+            line('Step 6: Run CSGRegion.evaluateBrushes() on the connected region...');
+            const r = regions[0];
+            const t0 = performance.now();
+            const { geometry, faceIds, timeMs } = r.evaluateBrushes();
+            line(`  CSG eval: ${timeMs.toFixed(2)}ms`, 'ok');
+            line('  triangle count: ' + (faceIds.length), 'ok');
+            line('  position attribute count: ' + geometry.getAttribute('position').count, 'ok');
+
+            line('Step 7: Inspect a few faceIds for sanity...');
+            const sample = faceIds.slice(0, 5);
+            for (const f of sample) {
+                line('  ' + JSON.stringify(f), 'info');
+            }
+
+            line('Step 8a: Smoke-check the materials bridge export exists...');
+            // Debug: fetch the file directly and check if the export string is in it
+            const rawResp = await fetch('/src/scene/materials.js');
+            const rawText = await rawResp.text();
+            line('  raw fetch length: ' + rawText.length, 'info');
+            line('  raw contains "export function getCSGMaterialsForScheme": ' + rawText.includes('export function getCSGMaterialsForScheme'), 'info');
+            line('  raw contains "csgSchemeCache": ' + rawText.includes('csgSchemeCache'), 'info');
+            const materialsModule = await import('/src/scene/materials.js');
+            line('  getCSGMaterialsForScheme: ' + (typeof materialsModule.getCSGMaterialsForScheme), materialsModule.getCSGMaterialsForScheme ? 'ok' : 'fail');
+            line('  clearCSGMaterialCache: ' + (typeof materialsModule.clearCSGMaterialCache), materialsModule.clearCSGMaterialCache ? 'ok' : 'fail');
+
+            line('Step 8b: Run assignUVsAndZones with a stub material provider...');
+            const THREE = await import('three');
+            // Track invocation count to verify assignUVsAndZones calls the bridge once per unique scheme
+            let stubCalls = 0;
+            const stubMatsForScheme = (key) => {
+                stubCalls++;
+                const out = [];
+                const colors = [0xaa6644, 0x44aa66, 0x6644aa, 0xaaaa44, 0x44aaaa, 0xaa44aa, 0xffffff];
+                for (let i = 0; i < 7; i++) out.push(new THREE.MeshLambertMaterial({ color: colors[i] }));
+                return out;
+            };
+            const result = assignUVsAndZones(geometry, faceIds, r.brushes, stubMatsForScheme);
+            line('  stub invoked ' + stubCalls + ' time(s)', 'ok');
+            line('  output triangle count: ' + result.faceIds.length, 'ok');
+            line('  output material count: ' + result.materials.length, 'ok');
+            line('  geometry groups: ' + result.geometry.groups.length, 'ok');
+            line('  has UVs: ' + !!result.geometry.getAttribute('uv'), result.geometry.getAttribute('uv') ? 'ok' : 'fail');
+
+            line('Step 9: findRoomBrushes(room, [room, alcove])...');
+            const roomSet = findRoomBrushes(room, [room, alcove]);
+            line('  room brushes found: ' + roomSet.size + ' (' + [...roomSet].join(',') + ')', roomSet.size === 2 ? 'ok' : 'fail');
+
+            line('Step 10: BrushDef.toJSON / fromJSON round-trip...');
+            const json = room.toJSON();
+            line('  json: ' + JSON.stringify(json), 'info');
+            const restored = BrushDef.fromJSON(json);
+            const ok = restored.id === room.id && restored.x === room.x && restored.w === room.w && restored.op === room.op;
+            line('  round-trip ' + (ok ? 'OK' : 'FAILED'), ok ? 'ok' : 'fail');
+
+            line('Step 11: Bake the region and re-evaluate...');
+            r.bake();
+            line('  brushes after bake: ' + r.brushes.length + ' (expect 0)', r.brushes.length === 0 ? 'ok' : 'fail');
+            line('  totalBakedBrushes: ' + r.totalBakedBrushes, 'ok');
+            line('  bakedBounds: ' + JSON.stringify(r.bakedBounds), 'ok');
+            const { geometry: g2, faceIds: f2, timeMs: t2 } = r.evaluateBrushes();
+            line(`  re-eval after bake: ${t2.toFixed(2)}ms, ${f2.length} tris`, 'ok');
+
+            line('Step 12: Phase 3 — initScene + rebuildAllCSG with explicit brushes...');
+            // Init the scene first (csgMesh.js imports `scene` from setup.js — must be initialized)
+            const setupModule = await import('/src/scene/setup.js');
+            setupModule.initScene();
+            const childrenBefore = setupModule.scene.children.length;
+            line('  scene initialized, children before CSG: ' + childrenBefore, 'ok');
+
+            // Skip state.csg coordination — pass brushes directly via the test parameter
+            const testBrushes = [new BrushDef(99, 'subtract', 0, 0, 0, 8, 6, 8)];
+            const csgMeshModule = await import('/src/mesh/csgMesh.js');
+            csgMeshModule.rebuildAllCSG(testBrushes);
+            line('  csgRegionMeshes size: ' + csgMeshModule.csgRegionMeshes.size, csgMeshModule.csgRegionMeshes.size === 1 ? 'ok' : 'fail');
+            const csgRegion = [...csgMeshModule.csgRegionMeshes.values()][0];
+            line('  region.mesh present: ' + !!csgRegion.mesh, csgRegion.mesh ? 'ok' : 'fail');
+            line('  region.faceIds length: ' + csgRegion.faceIds.length, 'ok');
+            line('  region.lastEvalMs: ' + csgRegion.lastEvalMs.toFixed(2) + 'ms', 'ok');
+            line('  scene.children after CSG: ' + setupModule.scene.children.length + ' (expect ' + (childrenBefore + 1) + ')', setupModule.scene.children.length === childrenBefore + 1 ? 'ok' : 'fail');
+
+            // Cleanup so the test page doesn't leak state into a follow-up reload
+            csgMeshModule.rebuildAllCSG([]);
+            line('  after cleanup, csgRegionMeshes size: ' + csgMeshModule.csgRegionMeshes.size, csgMeshModule.csgRegionMeshes.size === 0 ? 'ok' : 'fail');
+
+            line('');
+            line('=== ALL TESTS PASSED ===', 'ok');
+        } catch (err) {
+            line('');
+            line('=== TEST FAILED ===', 'fail');
+            line('Error: ' + err.message, 'fail');
+            if (err.stack) line(err.stack, 'fail');
+        }
+    </script>
+</body>
+</html>
