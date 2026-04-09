@@ -5,6 +5,8 @@ import { on } from '../systems/EventBus.js';
 import { state } from '../state.js';
 import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
 import { gridHelper } from '../scene/setup.js';
+import { setTool } from '../tools/ToolManager.js';
+import { setHoleMode } from '../csg/csgActions.js';
 
 // Callbacks set during init to avoid circular imports with main.js
 let callbacks = {};
@@ -26,25 +28,26 @@ export function initMenuActions(cbs) {
 }
 
 function handleToolAction(toolName) {
-    if (toolName === 'simple_stairs') {
-        state.tool = 'platform';
-        if (callbacks.clearExtrudeState) callbacks.clearExtrudeState();
+    if (toolName === 'csg') {
+        setTool('csg');
+    } else if (toolName === 'hole') {
+        setTool('csg');
+        setHoleMode(true, false);
+        callbacks.showMessage('HOLE mode — click any face');
+    } else if (toolName === 'door') {
+        setTool('csg');
+        setHoleMode(true, true);
+        callbacks.showMessage('DOOR mode — click a wall');
+    } else if (toolName === 'platform') {
+        setTool('platform');
+    } else if (toolName === 'simple_stairs') {
+        setTool('platform');
         state.platformPhase = 'simple_stair_from';
         state.simpleStairFrom = null;
         callbacks.showMessage('Click first stair endpoint — Esc to cancel');
-        return;
+    } else if (toolName === 'light') {
+        setTool('light');
     }
-
-    const validTools = ['push_pull', 'door', 'extrude', 'platform', 'light'];
-    if (!validTools.includes(toolName)) return;
-
-    state.tool = toolName;
-    if (toolName !== 'extrude' && callbacks.clearExtrudeState) callbacks.clearExtrudeState();
-    if (toolName !== 'platform' && callbacks.clearPlatformToolState) callbacks.clearPlatformToolState();
-    if (toolName !== 'light' && callbacks.clearLightToolState) callbacks.clearLightToolState();
-
-    const names = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', platform: 'Platform', light: 'Light' };
-    callbacks.showMessage('Tool: ' + names[toolName]);
 }
 
 function handleLightingAction(action) {
@@ -71,16 +74,15 @@ function handleLightingAction(action) {
 
 function handleTextureAction(schemeName) {
     if (!TEXTURE_SCHEMES[schemeName]) return;
-    if (!state.selectedFace) {
+    if (!state.csg.selectedFace) {
         callbacks.showMessage('Select a face first to apply texture');
         return;
     }
-    const vol = state.volumes.find(v => v.id === state.selectedFace.volumeId);
-    if (!vol) return;
-
-    vol.textureScheme = schemeName;
-    if (callbacks.rebuildVolume) callbacks.rebuildVolume(vol);
-    callbacks.showMessage('Scheme: ' + TEXTURE_SCHEMES[schemeName].label);
+    // Defer to csgActions.retextureRoom — flood-fills the room and rebuilds.
+    import('../csg/csgActions.js').then(mod => {
+        mod.retextureRoom(schemeName);
+        callbacks.showMessage('Scheme: ' + TEXTURE_SCHEMES[schemeName].label);
+    });
 }
 
 function handleViewAction(mode) {

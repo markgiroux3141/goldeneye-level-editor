@@ -1,7 +1,7 @@
 // Platform tool preview — selection outlines, connect mode visuals, stair preview
 
 import * as THREE from 'three';
-import { WORLD_SCALE } from '../core/Volume.js';
+import { WORLD_SCALE } from '../core/constants.js';
 import { state } from '../state.js';
 import { pickAny } from '../raycaster.js';
 import { isPointerLocked } from '../input/input.js';
@@ -9,7 +9,7 @@ import { snapToWTGrid } from '../actions.js';
 import { Platform } from '../core/Platform.js';
 import { StairRun } from '../core/StairRun.js';
 import { buildPlatformPreviewLines, buildEdgeHighlightLines, buildEdgeSlotLines, buildStairRunPreviewLines } from '../geometry/platformGeometry.js';
-import { volumeMeshes, platformMeshes } from '../mesh/MeshManager.js';
+import { csgRegionMeshes, platformMeshes } from '../mesh/MeshManager.js';
 import { closestPlatformEdge, closestOffsetOnEdge, projectCrosshairOntoEdge } from '../tools/platformEdgeUtils.js';
 import { scene } from '../scene/setup.js';
 
@@ -45,7 +45,7 @@ export function updatePlatformPreview(camera) {
     if (state.platformPhase === 'connecting_dst' && state.platformConnectFrom) {
         const fromPlat = state.platforms.find(p => p.id === state.platformConnectFrom.platformId);
         if (fromPlat) {
-            const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
+            const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes);
             if (anyHit) {
                 if (anyHit.type === 'platform' && anyHit.platformId !== fromPlat.id) {
                     const toPlat = state.platforms.find(p => p.id === anyHit.platformId);
@@ -158,7 +158,7 @@ export function updatePlatformPreview(camera) {
             platformPreviewGroup.add(new THREE.Line(geo, mat));
         };
 
-        const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
+        const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes);
         if (anyHit) {
             const snapped = snapToWTGrid(anyHit.point);
             drawPlatformMarker(snapped.x, snapped.y, snapped.z, platformPreviewMat);
@@ -187,7 +187,7 @@ export function updatePlatformPreview(camera) {
 
     // Hover preview when idle
     if (state.platformPhase === 'idle') {
-        const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
+        const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes);
         if (anyHit) {
             const snapped = snapToWTGrid(anyHit.point);
             const halfX = Math.floor(state.platformSizeX / 2);

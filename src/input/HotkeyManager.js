@@ -5,7 +5,12 @@ const STORAGE_KEY = 'goldeneye-hotkeys';
 // Default bindings: actionId -> keyCode
 // Actions use e.code (positional) except +/- which use e.key (character)
 const DEFAULT_BINDINGS = {
-    'cycle_tool':       'KeyT',
+    'tool_csg':           'Numpad1',
+    'tool_hole':          'Numpad2',
+    'tool_door':          'Numpad3',
+    'tool_platform':      'Numpad4',
+    'tool_simple_stairs': 'Numpad5',
+    'tool_light':         'Numpad6',
     'toggle_view':      'KeyV',
     'toggle_mode':      'KeyM',
     'push':             'Equal',      // +/= key
@@ -24,7 +29,12 @@ const DEFAULT_BINDINGS = {
 
 // Human-readable labels for the rebind UI
 const ACTION_LABELS = {
-    'cycle_tool':       'Cycle Tool',
+    'tool_csg':           'Tool: CSG',
+    'tool_hole':          'Tool: Hole Cutter',
+    'tool_door':          'Tool: Door Cutter',
+    'tool_platform':      'Tool: Platform',
+    'tool_simple_stairs': 'Tool: Simple Stairs',
+    'tool_light':         'Tool: Light',
     'toggle_view':      'Toggle View',
     'toggle_mode':      'Toggle Indoor/Terrain',
     'push':             'Push / Extrude',
@@ -33,7 +43,7 @@ const ACTION_LABELS = {
     'undo':             'Undo',
     'save':             'Save',
     'load':             'Load',
-    'simple_stairs':    'Simple Stairs',
+    'simple_stairs':    'Simple Stairs (in Platform tool)',
     'connect_stairs':   'Connect Stairs',
     'toggle_grounded':  'Toggle Grounded',
     'toggle_railings':  'Toggle Railings',
@@ -174,7 +184,8 @@ function formatKeyForDisplay(binding) {
     // Split on combo separator, format each part, rejoin with " + "
     const parts = binding.split('+');
     const formatted = parts.map(p =>
-        p.replace('Key', '')
+        p.replace('Numpad', 'Num')   // must run before 'Key'/'Digit' replaces
+         .replace('Key', '')
          .replace('Digit', '')
          .replace('Equal', '+/=')
          .replace('Minus', '-')

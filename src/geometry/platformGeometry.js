@@ -1,7 +1,7 @@
 // Platform geometry builder — generates solid rectangular slab geometry
 
 import * as THREE from 'three';
-import { WORLD_SCALE } from '../core/Volume.js';
+import { WORLD_SCALE } from '../core/constants.js';
 import { Platform } from '../core/Platform.js';
 
 const S = WORLD_SCALE;
@@ -445,44 +445,52 @@ export function buildStairRunPreviewLines(fromPt, toPt, width, stepHeight, riseO
 const RAILING_HEIGHT = 3.0;     // height above surface in WT
 const HANDRAIL_DEPTH = 0.2;     // perpendicular handrail strip depth in WT
 
-// Check if a platform edge is blocked by a volume wall
-function isEdgeAgainstWall(platform, edge, volumes) {
-    for (const vol of volumes) {
-        // Check if this volume's inner wall face aligns with the platform edge.
-        // A platform inside a room has edges at or near the volume's inner bounds.
-        // We also check outer bounds for platforms touching the outside of a wall.
-        let edgePos, edgeMin, edgeMax, volPerps, volMins, volMaxs;
-        if (edge === 'xMin') {
-            edgePos = platform.x;
-            edgeMin = platform.z; edgeMax = platform.maxZ;
-            volPerps = [vol.innerMinX, vol.innerMaxX, vol.outerMinX, vol.outerMaxX];
-            volMins = [vol.innerMinZ, vol.innerMinZ, vol.outerMinZ, vol.outerMinZ];
-            volMaxs = [vol.innerMaxZ, vol.innerMaxZ, vol.outerMaxZ, vol.outerMaxZ];
-        } else if (edge === 'xMax') {
-            edgePos = platform.maxX;
-            edgeMin = platform.z; edgeMax = platform.maxZ;
-            volPerps = [vol.innerMinX, vol.innerMaxX, vol.outerMinX, vol.outerMaxX];
-            volMins = [vol.innerMinZ, vol.innerMinZ, vol.outerMinZ, vol.outerMinZ];
-            volMaxs = [vol.innerMaxZ, vol.innerMaxZ, vol.outerMaxZ, vol.outerMaxZ];
-        } else if (edge === 'zMin') {
-            edgePos = platform.z;
-            edgeMin = platform.x; edgeMax = platform.maxX;
-            volPerps = [vol.innerMinZ, vol.innerMaxZ, vol.outerMinZ, vol.outerMaxZ];
-            volMins = [vol.innerMinX, vol.innerMinX, vol.outerMinX, vol.outerMinX];
-            volMaxs = [vol.innerMaxX, vol.innerMaxX, vol.outerMaxX, vol.outerMaxX];
-        } else { // zMax
-            edgePos = platform.maxZ;
-            edgeMin = platform.x; edgeMax = platform.maxX;
-            volPerps = [vol.innerMinZ, vol.innerMaxZ, vol.outerMinZ, vol.outerMaxZ];
-            volMins = [vol.innerMinX, vol.innerMinX, vol.outerMinX, vol.outerMinX];
-            volMaxs = [vol.innerMaxX, vol.innerMaxX, vol.outerMaxX, vol.outerMaxX];
-        }
-        for (let i = 0; i < volPerps.length; i++) {
-            if (Math.abs(volPerps[i] - edgePos) > 0.5) continue;
-            if (volMins[i] <= edgeMin && volMaxs[i] >= edgeMax) return true;
+// Returns true if a (WT-space) point is inside any subtractive brush's interior.
+// Doorframes/holeframes are included so railings stay across doorways
+// (the doorframe brush carves a tunnel, so the point past the wall is "inside").
+function pointInAnySubtractBrush(brushes, x, y, z) {
+    for (const brush of brushes) {
+        if (brush.op !== 'subtract') continue;
+        if (x > brush.x && x < brush.x + brush.w &&
+            y > brush.y && y < brush.y + brush.h &&
+            z > brush.z && z < brush.z + brush.d) {
+            return true;
         }
     }
     return false;
+}
+
+// Check if a platform edge is blocked by a CSG wall.
+// The edge is "against wall" if every probe point a short distance past the
+// edge falls outside all subtractive brushes (i.e., into solid shell material).
+// If any probe point hits open air, the edge has at least one open span and
+// railings should be drawn — matching the old all-or-nothing semantics.
+function isEdgeAgainstWall(platform, edge, brushes) {
+    if (!brushes || brushes.length === 0) return false;
+
+    const PROBE_DIST = 0.5;          // 0.5 WT past the edge
+    const yProbe = platform.y - 0.5; // halfway down the platform's thickness
+
+    let edgePos, edgeMin, edgeMax;
+    let probeAxis;     // 'x' or 'z'
+    let probeSign;     // -1 = probe in -axis dir, +1 = +axis dir
+
+    if (edge === 'xMin')      { edgePos = platform.x;    edgeMin = platform.z; edgeMax = platform.maxZ; probeAxis = 'x'; probeSign = -1; }
+    else if (edge === 'xMax') { edgePos = platform.maxX; edgeMin = platform.z; edgeMax = platform.maxZ; probeAxis = 'x'; probeSign =  1; }
+    else if (edge === 'zMin') { edgePos = platform.z;    edgeMin = platform.x; edgeMax = platform.maxX; probeAxis = 'z'; probeSign = -1; }
+    else                      { edgePos = platform.maxZ; edgeMin = platform.x; edgeMax = platform.maxX; probeAxis = 'z'; probeSign =  1; }
+
+    const SAMPLES = 5;
+    for (let i = 0; i < SAMPLES; i++) {
+        const t = (i + 0.5) / SAMPLES;
+        const along = edgeMin + t * (edgeMax - edgeMin);
+        const px = probeAxis === 'x' ? edgePos + probeSign * PROBE_DIST : along;
+        const pz = probeAxis === 'z' ? edgePos + probeSign * PROBE_DIST : along;
+        if (pointInAnySubtractBrush(brushes, px, yProbe, pz)) {
+            return false; // found open air past edge → not fully walled
+        }
+    }
+    return true; // all samples sit in solid material → wall covers the edge
 }
 
 // Get the ranges along an edge (0..1) that are occupied by stair run widths
@@ -534,15 +542,16 @@ function getFreeEdgeSegments(platform, edge, stairRuns) {
  * Build railing geometry for a platform's exposed edges.
  * Returns a BufferGeometry with simple quads (side plane + handrail).
  * Railings are added to free segments of each edge (not blocked by walls or stairs).
+ * `brushes` is `state.csg.brushes` — used for wall-proximity checks.
  */
-export function buildPlatformRailingGeometry(platform, stairRuns, volumes) {
+export function buildPlatformRailingGeometry(platform, stairRuns, brushes) {
     const builder = new PlatformGeometryBuilder();
     const yTop = platform.y;
     const railTop = yTop + RAILING_HEIGHT;
 
     const edges = ['xMin', 'xMax', 'zMin', 'zMax'];
     for (const edge of edges) {
-        if (isEdgeAgainstWall(platform, edge, volumes)) continue;
+        if (isEdgeAgainstWall(platform, edge, brushes)) continue;
 
         const line = platform.getEdgeLine(edge);
         const edgeNorm = Platform.edgeNormal(edge);
@@ -588,9 +597,10 @@ export function buildPlatformRailingGeometry(platform, stairRuns, volumes) {
 
 /**
  * Build railing geometry for a stair run (left and right side slopes).
+ * `brushes` is `state.csg.brushes` — used for wall-proximity checks on each side.
  * Returns a BufferGeometry.
  */
-export function buildStairRunRailingGeometry(stairRun, fromPlatform, toPlatform, volumes) {
+export function buildStairRunRailingGeometry(stairRun, fromPlatform, toPlatform, brushes) {
     const builder = new PlatformGeometryBuilder();
 
     const fromPt = resolveStairAnchor(fromPlatform, stairRun.anchorFrom);
@@ -632,27 +642,24 @@ export function buildStairRunRailingGeometry(stairRun, fromPlatform, toPlatform,
     const RAILING_INSET = 0.05; // push railings slightly inward to avoid z-fighting
 
     for (const side of sides) {
-        // Wall check: see if a volume wall (inner or outer face) aligns with this side
-        let blocked = false;
-        const runMin = Math.min(topRunPos, botRun);
-        const runMax = Math.max(topRunPos, botRun);
-        for (const vol of volumes) {
-            let volPerps, volRunMin, volRunMax;
-            if (runAxis === 'x') {
-                volPerps = [vol.innerMinZ, vol.innerMaxZ, vol.outerMinZ, vol.outerMaxZ];
-                volRunMin = vol.innerMinX; volRunMax = vol.innerMaxX;
-            } else {
-                volPerps = [vol.innerMinX, vol.innerMaxX, vol.outerMinX, vol.outerMaxX];
-                volRunMin = vol.innerMinZ; volRunMax = vol.innerMaxZ;
-            }
-            for (const vp of volPerps) {
-                if (Math.abs(vp - side.perp) > 0.5) continue;
-                if (volRunMin <= runMin && volRunMax >= runMax) {
-                    blocked = true;
+        // Brush-aware wall check: probe a few points just past the stair side along
+        // its perpendicular axis. If every probe sits in solid material, omit the railing.
+        let blocked = brushes && brushes.length > 0;
+        if (blocked) {
+            const PROBE_DIST = 0.5;
+            const SAMPLES = 5;
+            for (let i = 0; i < SAMPLES; i++) {
+                const t = (i + 0.5) / SAMPLES;
+                const runPos = botRun + t * (topRunPos - botRun);
+                const yProbe = botY + t * (topY - botY) + 0.5; // a hair above the tread
+                const perpProbe = side.perp + side.normalSign * PROBE_DIST;
+                const px = runAxis === 'x' ? runPos : perpProbe;
+                const pz = runAxis === 'x' ? perpProbe : runPos;
+                if (pointInAnySubtractBrush(brushes, px, yProbe, pz)) {
+                    blocked = false;
                     break;
                 }
             }
-            if (blocked) break;
         }
         if (blocked) continue;
 

@@ -3,8 +3,8 @@
 
 import * as THREE from 'three';
 import { state } from '../state.js';
-import { WORLD_SCALE } from '../core/Volume.js';
-import { volumeMeshes, platformMeshes, stairRunMeshes } from '../mesh/MeshManager.js';
+import { WORLD_SCALE } from '../core/constants.js';
+import { platformMeshes, stairRunMeshes } from '../mesh/MeshManager.js';
 import { computeAO } from './ambientOcclusion.js';
 import { storeBakedColors, clearBakedColorStore } from './bakedColorStore.js';
 import { subdivideGeometry } from './subdivide.js';
@@ -17,10 +17,11 @@ const S = WORLD_SCALE;
 // N=2 is a good balance: 4x more vertices for smoother gradients, fast bake.
 const BAKE_SUBDIVISIONS = 2;
 
-// Collect all scene meshes for shadow raycasting
+// Collect all scene meshes for shadow raycasting.
+// Phase 9 TODO: also include csgRegionMeshes once the spatial-hash bake transfer
+// is implemented (CSG mesh vertex order is unstable across rebuilds).
 function getOccluders() {
     const meshes = [];
-    for (const [, data] of volumeMeshes) meshes.push(data.mesh);
     for (const [, mesh] of platformMeshes) meshes.push(mesh);
     for (const [, mesh] of stairRunMeshes) meshes.push(mesh);
     return meshes;
@@ -158,10 +159,6 @@ export function bakeAllLighting(aoSamples = 32) {
 
     // Subdivide geometry only on first bake — subsequent re-bakes reuse subdivided meshes
     if (!geometrySubdivided) {
-        for (const [id, data] of volumeMeshes) {
-            const newFaceIds = subdivideMesh(data.mesh, data.faceIds);
-            data.faceIds = newFaceIds;
-        }
         for (const [, mesh] of platformMeshes) {
             subdivideMesh(mesh, null);
         }
@@ -187,11 +184,9 @@ export function bakeAllLighting(aoSamples = 32) {
 
     const occluders = getOccluders();
 
-    // Phase 3: Bake lighting onto subdivided geometry
+    // Bake lighting onto subdivided platform/stair geometry.
+    // Phase 9 TODO: bake CSG region meshes via spatial-hash transfer.
     const ambient = state.bakeAmbient;
-    for (const [id, data] of volumeMeshes) {
-        bakeMeshAndChildren(data.mesh, occluders, lights, aoSamples, 'vol_' + id, ambient);
-    }
     for (const [id, mesh] of platformMeshes) {
         bakeMeshAndChildren(mesh, occluders, lights, aoSamples, 'plat_' + id, ambient);
     }
@@ -229,7 +224,6 @@ export function clearBakedLighting() {
         }
     }
 
-    for (const [, data] of volumeMeshes) resetMeshAndChildren(data.mesh);
     for (const [, mesh] of platformMeshes) resetMeshAndChildren(mesh);
     for (const [, mesh] of stairRunMeshes) resetMeshAndChildren(mesh);
 

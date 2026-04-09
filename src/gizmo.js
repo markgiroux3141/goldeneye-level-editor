@@ -3,8 +3,8 @@
 // mouse movement moves/scales along that axis (quantized to WT), click again to confirm.
 
 import * as THREE from 'three';
-import { WORLD_SCALE } from './core/Volume.js';
 import {
+    WORLD_SCALE,
     GIZMO_ARROW_LENGTH, GIZMO_SHAFT_RADIUS, GIZMO_TIP_LENGTH,
     GIZMO_TIP_RADIUS, GIZMO_HANDLE_SIZE, GIZMO_DRAG_SENSITIVITY,
 } from './core/constants.js';

@@ -7,16 +7,12 @@ import { scene, gridHelper } from '../scene/setup.js';
 import { TEXTURE_SCHEMES, getSchemeByKey } from '../scene/textureSchemes.js';
 import { hotkeyManager } from '../input/HotkeyManager.js';
 import {
-    pushSelectedFace, pullSelectedFace,
-    deleteSelectedVolume, undoAction,
+    undoAction,
     saveLevel, loadLevel,
-    executeExtrude, reExtrudeVolumes,
-    clearExtrudeState,
 } from '../actions.js';
 import * as csgActions from '../csg/csgActions.js';
 import {
-    volumeMeshes, stairRunMeshes,
-    rebuildVolume, rebuildAllVolumes, removeVolumeMesh,
+    stairRunMeshes,
     rebuildPlatform, rebuildStairRun, rebuildConnectedStairRuns,
     rebuildAllPlatforms, rebuildAllStairRuns,
     rebuildAll, removePlatformMesh,
@@ -24,9 +20,52 @@ import {
     setAllWireframeVisible,
     rebuildAllCSG,
 } from '../mesh/MeshManager.js';
-import { toggleEditorMode, cycleToolForward, clearPlatformToolState, clearLightToolState } from './ToolManager.js';
+import { toggleEditorMode, setTool, clearPlatformToolState, clearLightToolState } from './ToolManager.js';
 
 export function handleIndoorKey(e, { gizmo, camera }) {
+    // ─── Tool/mode entry hotkeys (Numpad 1-6) ───────────────────────
+    // These fire from any current tool, so users can jump directly to any
+    // mode without cycling. Each switches state.tool (and any sub-mode flags).
+    if (isPointerLocked()) {
+        if (hotkeyManager.matches('tool_csg', e)) {
+            e.preventDefault();
+            setTool('csg');
+            return;
+        }
+        if (hotkeyManager.matches('tool_hole', e)) {
+            e.preventDefault();
+            setTool('csg');
+            csgActions.setHoleMode(true, false);
+            showMessage('HOLE mode — click any face');
+            return;
+        }
+        if (hotkeyManager.matches('tool_door', e)) {
+            e.preventDefault();
+            setTool('csg');
+            csgActions.setHoleMode(true, true);
+            showMessage('DOOR mode — click a wall');
+            return;
+        }
+        if (hotkeyManager.matches('tool_platform', e)) {
+            e.preventDefault();
+            setTool('platform');
+            return;
+        }
+        if (hotkeyManager.matches('tool_simple_stairs', e)) {
+            e.preventDefault();
+            setTool('platform');
+            state.platformPhase = 'simple_stair_from';
+            state.simpleStairFrom = null;
+            showMessage('Click first stair endpoint — Esc to cancel');
+            return;
+        }
+        if (hotkeyManager.matches('tool_light', e)) {
+            e.preventDefault();
+            setTool('light');
+            return;
+        }
+    }
+
     // M key to switch to terrain
     if (hotkeyManager.matches('toggle_mode', e) && isPointerLocked()) {
         e.preventDefault();
@@ -58,15 +97,6 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             csgActions.extrudeSelectedFace();
             return;
         }
-        // T = hole mode, Shift+T = door mode
-        if (e.code === 'KeyT') {
-            e.preventDefault();
-            csgActions.toggleHoleMode(e.shiftKey);
-            showMessage(state.csg.holeMode
-                ? (state.csg.holeDoor ? 'DOOR mode — click a wall' : 'HOLE mode — click any face')
-                : 'Hole/door mode off');
-            return;
-        }
         // B = bake current region
         if (e.code === 'KeyB') {
             e.preventDefault();
@@ -92,9 +122,12 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             else csgActions.scaleSelectedFace(-1, -1);
             return;
         }
-        // Number keys: retexture room
-        if (e.key >= '1' && e.key <= '9') {
-            const schemeName = getSchemeByKey(e.key);
+        // Main-row digit keys (Digit1..Digit9): retexture room.
+        // Use e.code, NOT e.key, so numpad numbers (Numpad1..Numpad6 — used
+        // for tool switching above) don't trigger retexture when NumLock is on.
+        if (e.code >= 'Digit1' && e.code <= 'Digit9') {
+            const digit = e.code.slice(5); // 'Digit1' → '1'
+            const schemeName = getSchemeByKey(digit);
             if (schemeName && state.csg.selectedFace) {
                 e.preventDefault();
                 saveUndoState();
@@ -124,40 +157,7 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             }
             return;
         }
-        // Fall through to global keys (cycle_tool, undo, save, load, view toggles)
-    }
-
-    // Extrude tool: +/- for extrude/shrink, Shift++ for extrude until blocked
-    if (state.tool === 'extrude') {
-        if (hotkeyManager.matches('push', e)) {
-            e.preventDefault();
-            if (state.extrudePhase === 'selecting') {
-                executeExtrude(showMessage, rebuildAllVolumes);
-            } else if (state.extrudePhase === 'extruded') {
-                reExtrudeVolumes('push', showMessage, rebuildAllVolumes);
-            }
-            return;
-        }
-        if (hotkeyManager.matches('pull', e)) {
-            e.preventDefault();
-            if (state.extrudePhase === 'extruded') {
-                reExtrudeVolumes('pull', showMessage, rebuildAllVolumes);
-            }
-            return;
-        }
-    }
-
-    // Push/Pull tool: +/- for push/pull
-    if (hotkeyManager.matches('push', e) && state.selectedFace && state.tool === 'push_pull') {
-        e.preventDefault();
-        pushSelectedFace(showMessage, rebuildVolume, rebuildAllVolumes);
-        return;
-    }
-
-    if (hotkeyManager.matches('pull', e) && state.selectedFace && state.tool === 'push_pull') {
-        e.preventDefault();
-        pullSelectedFace(showMessage, rebuildVolume);
-        return;
+        // Fall through to global keys (undo, save, load, view toggles)
     }
 
     // Platform tool keys
@@ -345,7 +345,6 @@ export function handleIndoorKey(e, { gizmo, camera }) {
         state.viewMode = state.viewMode === 'grid' ? 'textured' : 'grid';
         showMessage('View: ' + (state.viewMode === 'grid' ? 'Grid' : 'Textured'));
         rebuildAllCSG();
-        rebuildAllVolumes();
         rebuildAllPlatforms();
         rebuildAllStairRuns();
         return;
@@ -359,8 +358,9 @@ export function handleIndoorKey(e, { gizmo, camera }) {
         return;
     }
 
-    // E = toggle wireframe edges
-    if (e.code === 'KeyE' && isPointerLocked()) {
+    // Wireframe toggle (was E in legacy code; CSG tool consumed E for extrude above).
+    // Use Backslash so it doesn't conflict with CSG extrude.
+    if (e.code === 'Backslash' && isPointerLocked()) {
         e.preventDefault();
         state.showWireframe = !state.showWireframe;
         setAllWireframeVisible(state.showWireframe);
@@ -368,37 +368,8 @@ export function handleIndoorKey(e, { gizmo, camera }) {
         return;
     }
 
-    // Number keys: set texture scheme on selected volume
-    if (e.key >= '1' && e.key <= '9' && isPointerLocked() && state.selectedFace) {
-        const schemeName = getSchemeByKey(e.key);
-        if (schemeName) {
-            e.preventDefault();
-            const vol = state.volumes.find(v => v.id === state.selectedFace.volumeId);
-            if (vol) {
-                vol.textureScheme = schemeName;
-                rebuildVolume(vol);
-                showMessage('Scheme: ' + TEXTURE_SCHEMES[schemeName].label);
-            }
-            return;
-        }
-    }
-
-    if (hotkeyManager.matches('cycle_tool', e) && isPointerLocked()) {
-        e.preventDefault();
-        cycleToolForward();
-        return;
-    }
-
-    if ((hotkeyManager.matches('delete', e) || e.key === 'Delete') && state.selectedFace && isPointerLocked()) {
-        e.preventDefault();
-        const deletedId = deleteSelectedVolume(showMessage, rebuildAllVolumes);
-        if (deletedId) removeVolumeMesh(deletedId);
-        return;
-    }
-
     if (hotkeyManager.matches('undo', e)) {
         e.preventDefault();
-        clearExtrudeState();
         clearPlatformToolState();
         undoAction(showMessage, rebuildAll);
         return;
@@ -414,13 +385,5 @@ export function handleIndoorKey(e, { gizmo, camera }) {
         e.preventDefault();
         loadLevel(showMessage, rebuildAll);
         return;
-    }
-
-    if (hotkeyManager.matches('escape', e) && state.tool !== 'platform' && state.tool !== 'light') {
-        if (state.tool === 'extrude') {
-            clearExtrudeState();
-        }
-        state.selectedFace = null;
-        rebuildAllVolumes();
     }
 }

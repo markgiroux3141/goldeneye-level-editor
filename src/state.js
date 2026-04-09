@@ -1,33 +1,24 @@
 // Editor state — single source of truth
 
-import { Volume } from './core/Volume.js';
 import { Platform } from './core/Platform.js';
 import { StairRun } from './core/StairRun.js';
 import { TerrainMap } from './core/TerrainMap.js';
 import { PointLight } from './core/PointLight.js';
 import { BrushDef } from './core/BrushDef.js';
 import {
-    DEFAULT_DOOR_WIDTH, DEFAULT_DOOR_HEIGHT, DEFAULT_PUSH_STEP,
     DEFAULT_PLATFORM_SIZE_X, DEFAULT_PLATFORM_SIZE_Z, DEFAULT_PLATFORM_THICKNESS,
     DEFAULT_STAIR_WIDTH, DEFAULT_STAIR_STEP_HEIGHT, DEFAULT_STAIR_RISE_OVER_RUN,
-    DEFAULT_EXTRUDE_WIDTH, DEFAULT_EXTRUDE_HEIGHT,
     DEFAULT_BRUSH_RADIUS, DEFAULT_BRUSH_STRENGTH, DEFAULT_BRUSH_NOISE_SCALE, DEFAULT_BRUSH_NOISE_AMP,
     DEFAULT_BAKE_AMBIENT, MAX_UNDO,
 } from './core/constants.js';
 
 export const state = {
-    volumes: [],
-    connections: [],        // Connection[]
     platforms: [],          // Platform[]
     stairRuns: [],          // StairRun[]
-    nextVolumeId: 1,
-    nextConnectionId: 1,
     nextPlatformId: 1,
     nextStairRunId: 1,
 
-    // ─── CSG brush system (Phase 3+) ──────────────────────────────────
-    // Lives alongside the legacy volumes/connections during the migration.
-    // Phase 5/6 will swap callers and remove the legacy fields above.
+    // ─── CSG brush system ─────────────────────────────────────────────
     csg: {
         brushes: [],            // BrushDef[] (un-baked)
         nextBrushId: 1,
@@ -46,23 +37,9 @@ export const state = {
         doorPreview: null,      // { face, u0, u1, v0, v1 }
     },
 
-    selectedFace: null,     // { volumeId, axis, side, position, bounds: { u0, u1, v0, v1 } }
-    tool: 'push_pull',      // 'push_pull' | 'door' | 'extrude' | 'platform'
-    doorWidth: DEFAULT_DOOR_WIDTH,
-    doorHeight: DEFAULT_DOOR_HEIGHT,
-    pushStep: DEFAULT_PUSH_STEP,
+    tool: 'csg',            // 'csg' | 'platform' | 'light'
     undoStack: [],
     maxUndo: MAX_UNDO,
-
-    // Extrude tool state (transient — not serialized or in undo snapshots)
-    extrudeSelections: [],    // Array of { volumeId, axis, side, bounds, position }
-    extrudeDirection: null,   // { axis, side } — locked after first selection
-    extrudedVolumes: [],      // Array of volumeId — tracks created volumes for re-push
-    extrudeGrowSide: null,    // 'min' | 'max' — the side to push when extending protrusions
-    extrudeVolumeParentMap: {},  // { [protrusionId]: parentId }
-    extrudePhase: 'idle',     // 'idle' | 'selecting' | 'extruded'
-    extrudeWidth: DEFAULT_EXTRUDE_WIDTH,
-    extrudeHeight: DEFAULT_EXTRUDE_HEIGHT,
 
     // Stair settings (shared by platform-connect stairs and simple stairs)
     stairWidth: DEFAULT_STAIR_WIDTH,
@@ -127,14 +104,13 @@ export const state = {
 
 export function saveUndoState() {
     const snapshot = JSON.stringify({
-        volumes: state.volumes.map(v => v.toJSON()),
-        connections: state.connections,
         platforms: state.platforms.map(p => p.toJSON()),
         stairRuns: state.stairRuns.map(r => r.toJSON()),
         terrainMaps: state.terrainMaps.map(t => t.toJSON()),
         pointLights: state.pointLights.map(l => l.toJSON()),
         csgBrushes: state.csg.brushes.map(b => b.toJSON()),
         nextBrushId: state.csg.nextBrushId,
+        totalBakedBrushes: state.csg.totalBakedBrushes,
     });
     state.undoStack.push(snapshot);
     if (state.undoStack.length > state.maxUndo) state.undoStack.shift();
@@ -149,25 +125,21 @@ export function undo() {
         console.warn('Failed to parse undo snapshot:', e.message);
         return false;
     }
-    state.volumes = snapshot.volumes.map(j => Volume.fromJSON(j));
-    state.connections = snapshot.connections;
     state.platforms = (snapshot.platforms || []).map(j => Platform.fromJSON(j));
     state.stairRuns = (snapshot.stairRuns || []).map(j => StairRun.fromJSON(j));
     state.terrainMaps = (snapshot.terrainMaps || []).map(j => TerrainMap.fromJSON(j));
     state.pointLights = (snapshot.pointLights || []).map(j => PointLight.fromJSON(j));
     state.csg.brushes = (snapshot.csgBrushes || []).map(j => BrushDef.fromJSON(j));
     state.csg.nextBrushId = snapshot.nextBrushId || (Math.max(...state.csg.brushes.map(b => b.id), 0) + 1);
+    state.csg.totalBakedBrushes = snapshot.totalBakedBrushes || 0;
     state.csg.selectedFace = null;
     state.csg.activeBrush = null;
     state.csg.activeOp = null;
     state.csg.activeSide = null;
-    state.nextVolumeId = Math.max(...state.volumes.map(v => v.id), 0) + 1;
-    state.nextConnectionId = Math.max(...state.connections.map(c => c.id), 0) + 1;
     state.nextPlatformId = Math.max(...state.platforms.map(p => p.id), 0) + 1;
     state.nextStairRunId = Math.max(...state.stairRuns.map(r => r.id), 0) + 1;
     state.nextTerrainMapId = Math.max(...state.terrainMaps.map(t => t.id), 0) + 1;
     state.nextPointLightId = Math.max(...state.pointLights.map(l => l.id), 0) + 1;
-    state.selectedFace = null;
     state.selectedPlatformId = null;
     state.selectedStairRunId = null;
     state.selectedTerrainId = null;
@@ -177,9 +149,7 @@ export function undo() {
 
 export function serializeLevel() {
     return JSON.stringify({
-        version: 1,
-        volumes: state.volumes.map(v => v.toJSON()),
-        connections: state.connections,
+        version: 2,
         platforms: state.platforms.map(p => p.toJSON()),
         stairRuns: state.stairRuns.map(r => r.toJSON()),
         terrainMaps: state.terrainMaps.map(t => t.toJSON()),
@@ -187,8 +157,6 @@ export function serializeLevel() {
         csgBrushes: state.csg.brushes.map(b => b.toJSON()),
         nextBrushId: state.csg.nextBrushId,
         totalBakedBrushes: state.csg.totalBakedBrushes,
-        nextVolumeId: state.nextVolumeId,
-        nextConnectionId: state.nextConnectionId,
         nextPlatformId: state.nextPlatformId,
         nextStairRunId: state.nextStairRunId,
         nextTerrainMapId: state.nextTerrainMapId,
@@ -198,10 +166,9 @@ export function serializeLevel() {
 
 export function deserializeLevel(json) {
     const data = JSON.parse(json);
-    if (!data || !data.volumes) throw new Error('Invalid level data');
+    if (!data) throw new Error('Invalid level data');
     const version = data.version || 0;
-    state.volumes = data.volumes.map(j => Volume.fromJSON(j));
-    state.connections = data.connections || [];
+    if (version !== 2) throw new Error('Save v1 no longer supported (Phase 6 dropped legacy Volume/Connection format)');
     state.platforms = (data.platforms || []).map(j => Platform.fromJSON(j));
     state.stairRuns = (data.stairRuns || []).map(j => StairRun.fromJSON(j));
     state.terrainMaps = (data.terrainMaps || []).map(j => TerrainMap.fromJSON(j));
@@ -213,13 +180,10 @@ export function deserializeLevel(json) {
     state.csg.activeBrush = null;
     state.csg.activeOp = null;
     state.csg.activeSide = null;
-    state.nextVolumeId = data.nextVolumeId || (Math.max(...state.volumes.map(v => v.id), 0) + 1);
-    state.nextConnectionId = data.nextConnectionId || (Math.max(...state.connections.map(c => c.id), 0) + 1);
     state.nextPlatformId = data.nextPlatformId || (Math.max(...state.platforms.map(p => p.id), 0) + 1);
     state.nextStairRunId = data.nextStairRunId || (Math.max(...state.stairRuns.map(r => r.id), 0) + 1);
     state.nextTerrainMapId = data.nextTerrainMapId || (Math.max(...state.terrainMaps.map(t => t.id), 0) + 1);
     state.nextPointLightId = data.nextPointLightId || (Math.max(...state.pointLights.map(l => l.id), 0) + 1);
-    state.selectedFace = null;
     state.selectedPlatformId = null;
     state.selectedStairRunId = null;
     state.selectedTerrainId = null;

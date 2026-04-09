@@ -5,43 +5,6 @@ import * as THREE from 'three';
 const raycaster = new THREE.Raycaster();
 const screenCenter = new THREE.Vector2(0, 0);
 
-// Pick the face under the crosshair
-// volumeMeshes: Map<volumeId, { mesh, faceIds }>
-export function pickFace(camera, volumeMeshes) {
-    raycaster.setFromCamera(screenCenter, camera);
-
-    const meshes = [];
-    for (const [, data] of volumeMeshes) {
-        meshes.push(data.mesh);
-    }
-
-    const hits = raycaster.intersectObjects(meshes, false);
-    if (hits.length === 0) return null;
-
-    const hit = hits[0];
-    const mesh = hit.object;
-
-    let faceIds = null;
-    for (const [, data] of volumeMeshes) {
-        if (data.mesh === mesh) {
-            faceIds = data.faceIds;
-            break;
-        }
-    }
-
-    if (!faceIds) return null;
-
-    const triIndex = hit.faceIndex;
-    if (triIndex >= 0 && triIndex < faceIds.length) {
-        return {
-            ...faceIds[triIndex],
-            point: hit.point,
-        };
-    }
-
-    return null;
-}
-
 // Pick a CSG region face under the crosshair
 // csgRegionMeshes: Map<regionId, { mesh, faceIds, ... }>
 // Returns: { regionId, brushId, axis, side, position, point } | null
@@ -150,21 +113,18 @@ export function pickLight(camera, pickTargets) {
     return { lightId, point: hit.point };
 }
 
-// Pick any object (volumes, platforms, lights) or the ground plane — returns the nearest hit
+// Pick any object (CSG regions, platforms, lights) or the ground plane — returns the nearest hit
 const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // Y=0 ground plane
 const groundIntersect = new THREE.Vector3();
 
-export function pickAny(camera, volumeMeshes, platformMeshes, lightPickTargets, csgRegionMeshes = null) {
+export function pickAny(camera, csgRegionMeshes, platformMeshes, lightPickTargets) {
     raycaster.setFromCamera(screenCenter, camera);
 
     const allMeshes = [];
-    for (const [, data] of volumeMeshes) allMeshes.push(data.mesh);
+    for (const [, data] of csgRegionMeshes) allMeshes.push(data.mesh);
     for (const [, mesh] of platformMeshes) allMeshes.push(mesh);
     if (lightPickTargets) {
         for (const mesh of lightPickTargets) allMeshes.push(mesh);
-    }
-    if (csgRegionMeshes) {
-        for (const [, data] of csgRegionMeshes) allMeshes.push(data.mesh);
     }
 
     const hits = raycaster.intersectObjects(allMeshes, false);
@@ -198,7 +158,7 @@ export function pickAny(camera, volumeMeshes, platformMeshes, lightPickTargets, 
     }
 
     // Check if it's a CSG region mesh
-    if (csgRegionMeshes && mesh.userData.isCSG) {
+    if (mesh.userData.isCSG) {
         let faceIds = null;
         let regionId = null;
         for (const [id, data] of csgRegionMeshes) {
@@ -208,20 +168,6 @@ export function pickAny(camera, volumeMeshes, platformMeshes, lightPickTargets, 
             const triIndex = hit.faceIndex;
             if (triIndex >= 0 && triIndex < faceIds.length) {
                 return { type: 'csg', regionId, ...faceIds[triIndex], point: hit.point };
-            }
-        }
-    }
-
-    // Check if it's a volume
-    if (mesh.userData.volumeId != null) {
-        let faceIds = null;
-        for (const [, data] of volumeMeshes) {
-            if (data.mesh === mesh) { faceIds = data.faceIds; break; }
-        }
-        if (faceIds) {
-            const triIndex = hit.faceIndex;
-            if (triIndex >= 0 && triIndex < faceIds.length) {
-                return { type: 'volume', ...faceIds[triIndex], point: hit.point };
             }
         }
     }

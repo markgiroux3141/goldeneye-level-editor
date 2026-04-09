@@ -1,19 +1,18 @@
 // Indoor mode mousedown handler
 
-import { WORLD_SCALE } from '../core/Volume.js';
+import { WORLD_SCALE } from '../core/constants.js';
 import { state, saveUndoState } from '../state.js';
 import { isPointerLocked } from '../input/input.js';
 import { showMessage } from '../hud/hud.js';
-import { pickFace, pickCSGFace, pickPlatform, pickStairRun, pickLight, pickAny } from '../raycaster.js';
-import { addExtrudeSelection, clearExtrudeState, placeDoorOnFace, snapToWTGrid } from '../actions.js';
+import { pickCSGFace, pickPlatform, pickStairRun, pickLight, pickAny } from '../raycaster.js';
+import { snapToWTGrid } from '../actions.js';
 import { selectFaceAtCrosshair, confirmHolePlacement } from '../csg/csgActions.js';
 import { csgRegionMeshes } from '../mesh/csgMesh.js';
 import { Platform } from '../core/Platform.js';
 import { StairRun } from '../core/StairRun.js';
 import { PointLight } from '../core/PointLight.js';
 import {
-    volumeMeshes, platformMeshes,
-    rebuildVolume, rebuildAllVolumes,
+    platformMeshes,
     rebuildPlatform, rebuildStairRun, rebuildConnectedStairRuns,
     rebuildLight, updateLightSelection, getLightPickTargets,
 } from '../mesh/MeshManager.js';
@@ -36,8 +35,6 @@ export function handleIndoorClick(e, { gizmo, camera }) {
         selectFaceAtCrosshair(csgHit);
         return;
     }
-
-    const hit = pickFace(camera, volumeMeshes);
 
     // Light tool click handling
     if (state.tool === 'light') {
@@ -82,7 +79,7 @@ export function handleIndoorClick(e, { gizmo, camera }) {
         }
 
         // Place new light at the hit surface
-        const anyHit = pickAny(camera, volumeMeshes, platformMeshes, lightTargets);
+        const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes, lightTargets);
         if (!anyHit) return;
         const snapped = snapToWTGrid(anyHit.point);
 
@@ -113,7 +110,7 @@ export function handleIndoorClick(e, { gizmo, camera }) {
 
         // Simple stair placement — first click
         if (state.platformPhase === 'simple_stair_from') {
-            const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
+            const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes);
             if (!anyHit) { showMessage('Click a surface'); return; }
             const snapped = snapToWTGrid(anyHit.point);
             state.simpleStairFrom = { x: snapped.x, y: snapped.y, z: snapped.z };
@@ -124,7 +121,7 @@ export function handleIndoorClick(e, { gizmo, camera }) {
 
         // Simple stair placement — second click
         if (state.platformPhase === 'simple_stair_to' && state.simpleStairFrom) {
-            const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
+            const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes);
             if (!anyHit) { showMessage('Click a surface'); return; }
             const snapped = snapToWTGrid(anyHit.point);
             const fromPt = state.simpleStairFrom;
@@ -213,7 +210,7 @@ export function handleIndoorClick(e, { gizmo, camera }) {
             }
 
             // Place new platform at the hit surface
-            const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
+            const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes);
             if (!anyHit) return;
             const snapped = snapToWTGrid(anyHit.point);
 
@@ -222,7 +219,7 @@ export function handleIndoorClick(e, { gizmo, camera }) {
             let py = snapped.y;
             let pz = snapped.z - Math.floor(state.platformSizeZ / 2);
 
-            if (anyHit.type === 'volume' && anyHit.axis !== 'y') {
+            if (anyHit.type === 'csg' && anyHit.axis !== 'y') {
                 const camPos = camera.position;
                 if (anyHit.axis === 'x') {
                     const wallX = snapped.x;
@@ -258,7 +255,7 @@ export function handleIndoorClick(e, { gizmo, camera }) {
         if (state.platformPhase === 'connecting_dst' && state.platformConnectFrom) {
             const from = state.platformConnectFrom;
             const fromPlat = state.platforms.find(p => p.id === from.platformId);
-            const anyHit = pickAny(camera, volumeMeshes, platformMeshes);
+            const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes);
             if (!anyHit) { showMessage('Click a platform or the floor'); return; }
 
             if (anyHit.type === 'platform' && anyHit.platformId !== from.platformId) {
@@ -267,7 +264,7 @@ export function handleIndoorClick(e, { gizmo, camera }) {
                 state.platformConnectTo = { type: 'platform', platformId: toPlat.id, edge };
                 const dir = { x: toPlat.centerX - fromPlat.centerX, z: toPlat.centerZ - fromPlat.centerZ };
                 state.platformConnectFrom.edge = bestEdgeForDirection(fromPlat, dir);
-            } else if (anyHit.type === 'ground' || anyHit.type === 'volume') {
+            } else if (anyHit.type === 'ground' || anyHit.type === 'csg') {
                 state.platformConnectTo = { type: 'ground' };
                 const gp = snapToWTGrid(anyHit.point);
                 state.platformConnectTo.y = gp.y;
@@ -352,32 +349,5 @@ export function handleIndoorClick(e, { gizmo, camera }) {
             state.platformConnectTo = null;
             return;
         }
-        return;
-    }
-
-    if (!hit) {
-        if (state.tool === 'extrude') {
-            clearExtrudeState();
-        }
-        state.selectedFace = null;
-        rebuildAllVolumes();
-        return;
-    }
-
-    if (state.tool === 'extrude') {
-        if (hit.bounds.u0 === 0 && hit.bounds.u1 === 0 && hit.bounds.v0 === 0 && hit.bounds.v1 === 0) return;
-
-        if (!e.shiftKey) {
-            clearExtrudeState();
-        }
-        addExtrudeSelection(hit.volumeId, hit.axis, hit.side, hit.point, showMessage);
-        return;
-    }
-
-    if (state.tool === 'door' && !(hit.bounds.u0 === 0 && hit.bounds.u1 === 0 && hit.bounds.v0 === 0 && hit.bounds.v1 === 0)) {
-        placeDoorOnFace(hit.volumeId, hit.axis, hit.side, hit.point, showMessage, rebuildVolume);
-    } else {
-        state.selectedFace = hit;
-        rebuildAllVolumes();
     }
 }

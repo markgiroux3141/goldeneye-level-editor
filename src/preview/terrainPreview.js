@@ -1,7 +1,7 @@
 // Terrain mode preview — boundary lines, holes, brush circle
 
 import * as THREE from 'three';
-import { WORLD_SCALE } from '../core/Volume.js';
+import { WORLD_SCALE } from '../core/constants.js';
 import { state } from '../state.js';
 import { isPointerLocked } from '../input/input.js';
 import { buildBoundaryLines, buildVertexMarkers, buildBrushCircle } from '../geometry/terrainGeometry.js';

@@ -4,14 +4,12 @@ import * as THREE from 'three';
 import { initScene, scene, renderer, camera } from './scene/setup.js';
 import { initInput, initKeyActions, onKeyDown, isKeyDown, isPointerLocked, consumeMouseDelta, onMiddleClick, reacquirePointerLock, releasePointerLock } from './input/input.js';
 import { updateCamera } from './scene/camera.js';
-import { WORLD_SCALE } from './core/Volume.js';
-import { Volume } from './core/Volume.js';
+import { WORLD_SCALE } from './core/constants.js';
 import { state, deserializeLevel } from './state.js';
 import { initMaterials } from './scene/materials.js';
 import { loadTextureSchemes } from './scene/textureSchemes.js';
 import { showMessage, updateHUD, initHUD } from './hud/hud.js';
 import { loadFromLocalStorage } from './io/LevelStorage.js';
-import { clearExtrudeState } from './actions.js';
 import { PlatformGizmo } from './gizmo.js';
 import { FOG_NEAR, FOG_FAR, INDOOR_BG_COLOR, TERRAIN_BG_COLOR, TERRAIN_PERSPECTIVE_BG } from './core/constants.js';
 import { createOrthoCamera, updateOrthoCamera, handleOrthoResize } from './terrain/orthographicCamera.js';
@@ -20,16 +18,14 @@ import { applyBrush } from './terrain/terrainBrush.js';
 import { RadialMenu } from './ui/RadialMenu.js';
 import { buildMenuTree } from './ui/menuConfig.js';
 import { initMenuActions } from './ui/menuActions.js';
-import { terrainMeshes, rebuildVolume, rebuildPlatform, rebuildConnectedStairRuns, rebuildTerrainWalls, generateTerrainMesh, rebuildAll, rebuildLight, setRealtimePreview, rebuildAllCSG } from './mesh/MeshManager.js';
+import { terrainMeshes, rebuildPlatform, rebuildConnectedStairRuns, rebuildTerrainWalls, generateTerrainMesh, rebuildAll, rebuildLight, setRealtimePreview, rebuildAllCSG } from './mesh/MeshManager.js';
 import { BrushDef } from './core/BrushDef.js';
-import { updateDoorPreview } from './preview/doorPreview.js';
-import { updateExtrudePreview } from './preview/extrudePreview.js';
 import { updatePlatformPreview } from './preview/platformPreview.js';
 import { updateTerrainPreview } from './preview/terrainPreview.js';
 import { updateCSGSelectionPreview, updateCSGHolePreview } from './preview/csgPreviews.js';
 import * as csgActions from './csg/csgActions.js';
 import { updateTerrainHUD } from './hud/terrainHud.js';
-import { initToolManager, clearPlatformToolState, clearLightToolState, toggleEditorMode, getActiveTerrain } from './tools/ToolManager.js';
+import { initToolManager, toggleEditorMode, getActiveTerrain } from './tools/ToolManager.js';
 import { bakeAllLighting, clearBakedLighting } from './lighting/lightBaker.js';
 import { handleIndoorClick } from './tools/indoorClick.js';
 import { handleTerrainClick, handleTerrainMouseUp, handleTerrainMouseMove, handleTerrainWheel, getIsSculpting } from './tools/terrainClick.js';
@@ -127,10 +123,6 @@ onKeyDown((e) => {
     // Wire radial menu actions to editor operations
     initMenuActions({
         showMessage,
-        clearExtrudeState,
-        clearPlatformToolState,
-        clearLightToolState,
-        rebuildVolume,
         rebuildAll,
         bakeLighting: () => {
             const elapsed = bakeAllLighting(32);
@@ -152,13 +144,14 @@ onKeyDown((e) => {
         const saved = loadFromLocalStorage();
         if (saved) {
             const data = JSON.parse(saved);
-            if (data.volumes && data.volumes.length > 0) {
+            const hasBrushes = data.csgBrushes && data.csgBrushes.length > 0;
+            const hasTerrain = data.terrainMaps && data.terrainMaps.length > 0;
+            if (hasBrushes || hasTerrain) {
                 deserializeLevel(saved);
                 rebuildAll();
                 loadedSave = true;
-                // Auto-enter appropriate mode
                 document.getElementById('lock-prompt').style.display = 'none';
-                if (data.terrainMaps && data.terrainMaps.length > 0 && (!data.volumes || data.volumes.length === 0)) {
+                if (hasTerrain && !hasBrushes) {
                     // Terrain-only save — go to terrain mode
                     toggleEditorMode();
                 }
@@ -174,16 +167,9 @@ onKeyDown((e) => {
 
         function startIndoorMode() {
             document.getElementById('lock-prompt').style.display = 'none';
-            const firstVolume = new Volume(state.nextVolumeId++, 0, 0, 0, 16, 12, 16);
-            state.volumes.push(firstVolume);
-            rebuildVolume(firstVolume);
-
-            // Bootstrap a CSG brush offset from the volume so both systems are visible at once.
-            // Pick the CSG tool to interact with this room (T to cycle tools).
-            const firstBrush = new BrushDef(state.csg.nextBrushId++, 'subtract', 24, 0, 0, 16, 12, 16);
+            const firstBrush = new BrushDef(state.csg.nextBrushId++, 'subtract', 0, 0, 0, 16, 12, 16);
             state.csg.brushes.push(firstBrush);
             rebuildAllCSG();
-
             renderer.domElement.requestPointerLock();
         }
 
@@ -393,8 +379,6 @@ function animate() {
     }
     gizmo.update(gizmoTarget, camera);
 
-    updateDoorPreview(camera);
-    updateExtrudePreview(camera);
     updatePlatformPreview(camera);
     updateCSGSelectionPreview(camera);
     updateCSGHolePreview(camera);

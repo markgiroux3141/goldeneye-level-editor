@@ -1,7 +1,7 @@
 // Platform edge utilities — pure geometric computations for edge detection and projection
 
 import * as THREE from 'three';
-import { WORLD_SCALE } from '../core/Volume.js';
+import { WORLD_SCALE } from '../core/constants.js';
 import { Platform } from '../core/Platform.js';
 
 // Find closest platform edge to a world-space point

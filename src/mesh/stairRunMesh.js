@@ -43,7 +43,7 @@ export function rebuildStairRun(run) {
 
     // Add railings if enabled
     if (run.railings) {
-        const railGeo = buildStairRunRailingGeometry(run, fromPlat, toPlat, state.volumes);
+        const railGeo = buildStairRunRailingGeometry(run, fromPlat, toPlat, state.csg.brushes);
         if (railGeo.getAttribute('position') && railGeo.getAttribute('position').count > 0) {
             const railMat = state.viewMode === 'textured' ? getRailingMaterial() : getRailingGridMaterial();
             const railMesh = new THREE.Mesh(railGeo, railMat);

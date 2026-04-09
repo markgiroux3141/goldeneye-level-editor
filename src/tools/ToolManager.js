@@ -3,12 +3,10 @@
 import { state } from '../state.js';
 import { showMessage } from '../hud/hud.js';
 import { setPointerLockEnabled } from '../input/input.js';
-import { clearExtrudeState } from '../actions.js';
 import { setIndoorMeshesVisible } from '../mesh/MeshManager.js';
 import { TerrainMap } from '../core/TerrainMap.js';
 
-const TOOL_CYCLE = ['push_pull', 'door', 'extrude', 'platform', 'light', 'csg'];
-const TOOL_NAMES = { push_pull: 'Push/Pull', door: 'Door', extrude: 'Extrude', platform: 'Platform', light: 'Light', csg: 'CSG' };
+const TOOL_LABELS = { csg: 'CSG', platform: 'Platform', light: 'Light' };
 const TERRAIN_TOOL_CYCLE = ['boundary', 'hole', 'edit', 'sculpt'];
 const TERRAIN_TOOL_NAMES = { boundary: 'Boundary', hole: 'Hole', edit: 'Edit', sculpt: 'Sculpt' };
 const BRUSH_CYCLE = ['raise', 'noise', 'smooth', 'flatten'];
@@ -43,19 +41,41 @@ export function clearLightToolState() {
     _gizmo.update(null, _camera);
 }
 
-export function cycleToolForward() {
-    if (state.editorMode === 'terrain') {
-        const idx = TERRAIN_TOOL_CYCLE.indexOf(state.terrainTool);
-        state.terrainTool = TERRAIN_TOOL_CYCLE[(idx + 1) % TERRAIN_TOOL_CYCLE.length];
-        showMessage('Terrain Tool: ' + TERRAIN_TOOL_NAMES[state.terrainTool]);
+// Reset all CSG tool sub-state. Called when leaving the CSG tool so the next
+// time the user enters it they get a clean slate (no stale selection / hole mode).
+export function clearCSGToolState() {
+    state.csg.selectedFace = null;
+    state.csg.activeBrush = null;
+    state.csg.activeOp = null;
+    state.csg.activeSide = null;
+    state.csg.holeMode = false;
+    state.csg.holeDoor = false;
+    state.csg.doorPreview = null;
+    state.csg.selSizeU = 0;
+    state.csg.selSizeV = 0;
+}
+
+// Single source of truth for switching the indoor tool. Both the radial menu
+// and the numpad hotkey handler call this. Pure tool switch — sub-mode entry
+// (hole/door/simple_stairs) is composed at the call site.
+export function setTool(toolName) {
+    if (toolName !== 'csg' && toolName !== 'platform' && toolName !== 'light') {
+        console.warn('setTool: unknown tool', toolName);
         return;
     }
-    const idx = TOOL_CYCLE.indexOf(state.tool);
-    state.tool = TOOL_CYCLE[(idx + 1) % TOOL_CYCLE.length];
-    if (state.tool !== 'extrude') clearExtrudeState();
-    if (state.tool !== 'platform') clearPlatformToolState();
-    if (state.tool !== 'light') clearLightToolState();
-    showMessage('Tool: ' + TOOL_NAMES[state.tool]);
+    if (state.tool === 'csg' && toolName !== 'csg') clearCSGToolState();
+    state.tool = toolName;
+    if (toolName !== 'platform') clearPlatformToolState();
+    if (toolName !== 'light') clearLightToolState();
+    showMessage('Tool: ' + TOOL_LABELS[toolName]);
+}
+
+// Terrain mode T-key cycles the terrain tool (boundary/hole/edit/sculpt).
+// This is unrelated to indoor tool switching, which is now flat-numpad only.
+export function cycleTerrainTool() {
+    const idx = TERRAIN_TOOL_CYCLE.indexOf(state.terrainTool);
+    state.terrainTool = TERRAIN_TOOL_CYCLE[(idx + 1) % TERRAIN_TOOL_CYCLE.length];
+    showMessage('Terrain Tool: ' + TERRAIN_TOOL_NAMES[state.terrainTool]);
 }
 
 export function toggleEditorMode() {

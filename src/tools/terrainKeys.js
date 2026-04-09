@@ -9,7 +9,7 @@ import { MIN_BRUSH_RADIUS, MAX_BRUSH_RADIUS, MIN_BRUSH_STRENGTH, MAX_BRUSH_STREN
 import { undoAction, saveLevel, loadLevel } from '../actions.js';
 import { rebuildTerrainWalls, terrainMeshes } from '../mesh/MeshManager.js';
 import {
-    toggleEditorMode, cycleToolForward, toggleTerrainCamera,
+    toggleEditorMode, cycleTerrainTool, toggleTerrainCamera,
     cycleTerrainBrush, clearTerrainDrawingState, getActiveTerrain,
 } from './ToolManager.js';
 
@@ -24,7 +24,7 @@ export function handleTerrainKey(e, { generateTerrainMesh, rebuildAll }) {
     // T = cycle terrain tool
     if (e.code === 'KeyT') {
         e.preventDefault();
-        cycleToolForward();
+        cycleTerrainTool();
         return;
     }
 

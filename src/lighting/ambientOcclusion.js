@@ -1,7 +1,7 @@
 // Ambient occlusion — hemisphere sampling for per-vertex darkening in corners/crevices
 
 import * as THREE from 'three';
-import { WORLD_SCALE } from '../core/Volume.js';
+import { WORLD_SCALE } from '../core/constants.js';
 
 const S = WORLD_SCALE;
 const MAX_AO_DIST = 8 * S; // max distance for AO rays (8 WT units)

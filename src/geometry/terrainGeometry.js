@@ -1,7 +1,7 @@
 // Terrain mesh builder — creates Three.js BufferGeometry from TerrainMap data
 
 import * as THREE from 'three';
-import { WORLD_SCALE } from '../core/Volume.js';
+import { WORLD_SCALE } from '../core/constants.js';
 
 /**
  * Build a Three.js BufferGeometry from a TerrainMap's vertices and triangles.

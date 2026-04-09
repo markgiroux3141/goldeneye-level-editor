@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { state } from '../state.js';
-import { WORLD_SCALE } from '../core/Volume.js';
+import { WORLD_SCALE } from '../core/constants.js';
 import { scene } from '../scene/setup.js';
 
 const S = WORLD_SCALE;

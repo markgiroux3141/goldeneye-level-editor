@@ -1,6 +1,6 @@
 // Terrain mode mouse event handlers
 
-import { WORLD_SCALE } from '../core/Volume.js';
+import { WORLD_SCALE } from '../core/constants.js';
 import { state, saveUndoState } from '../state.js';
 import { isPointerLocked } from '../input/input.js';
 import { showMessage } from '../hud/hud.js';

@@ -409,6 +409,8 @@ export function scaleSelectedFace(deltaU, deltaV) {
 
 // ─── Hole / Door Modal Tool ──────────────────────────────────────────
 
+// Legacy: true toggle. No callers remain after the Numpad-tool refactor;
+// kept in case future code needs the toggle semantic.
 export function toggleHoleMode(door) {
     const csg = state.csg;
     csg.holeDoor = !!door;
@@ -419,6 +421,21 @@ export function toggleHoleMode(door) {
         csg.activeSide = null;
     } else {
         csg.doorPreview = null;
+    }
+}
+
+// Explicit setter — no toggle. Used by Numpad2/Numpad3 hotkeys and by the
+// radial menu Hole/Door entries so the user can transition between modes
+// without flicker (e.g. Hole → Door without canceling first).
+export function setHoleMode(on, door) {
+    const csg = state.csg;
+    csg.holeMode = !!on;
+    csg.holeDoor = !!door;
+    csg.doorPreview = null;
+    if (on) {
+        csg.activeBrush = null;
+        csg.activeOp = null;
+        csg.activeSide = null;
     }
 }
 

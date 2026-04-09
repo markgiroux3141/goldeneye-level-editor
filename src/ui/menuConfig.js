@@ -8,12 +8,12 @@ export function buildMenuTree() {
         {
             label: 'Tools',
             children: [
-                { label: 'Push/Pull', action: 'tool:push_pull', hotkey: hotkeyManager.getDisplayKey('cycle_tool'), hotkeyAction: 'cycle_tool' },
-                { label: 'Door', action: 'tool:door', hotkey: hotkeyManager.getDisplayKey('cycle_tool'), hotkeyAction: 'cycle_tool' },
-                { label: 'Extrude', action: 'tool:extrude', hotkey: hotkeyManager.getDisplayKey('cycle_tool'), hotkeyAction: 'cycle_tool' },
-                { label: 'Platform', action: 'tool:platform', hotkey: hotkeyManager.getDisplayKey('cycle_tool'), hotkeyAction: 'cycle_tool' },
-                { label: 'Simple Stairs', action: 'tool:simple_stairs', hotkey: hotkeyManager.getDisplayKey('simple_stairs'), hotkeyAction: 'simple_stairs' },
-                { label: 'Light', action: 'tool:light', hotkey: hotkeyManager.getDisplayKey('cycle_tool'), hotkeyAction: 'cycle_tool' },
+                { label: 'CSG',           action: 'tool:csg',           hotkey: hotkeyManager.getDisplayKey('tool_csg'),           hotkeyAction: 'tool_csg' },
+                { label: 'Hole Cutter',   action: 'tool:hole',          hotkey: hotkeyManager.getDisplayKey('tool_hole'),          hotkeyAction: 'tool_hole' },
+                { label: 'Door Cutter',   action: 'tool:door',          hotkey: hotkeyManager.getDisplayKey('tool_door'),          hotkeyAction: 'tool_door' },
+                { label: 'Platform',      action: 'tool:platform',      hotkey: hotkeyManager.getDisplayKey('tool_platform'),      hotkeyAction: 'tool_platform' },
+                { label: 'Simple Stairs', action: 'tool:simple_stairs', hotkey: hotkeyManager.getDisplayKey('tool_simple_stairs'), hotkeyAction: 'tool_simple_stairs' },
+                { label: 'Light',         action: 'tool:light',         hotkey: hotkeyManager.getDisplayKey('tool_light'),         hotkeyAction: 'tool_light' },
             ],
         },
         {

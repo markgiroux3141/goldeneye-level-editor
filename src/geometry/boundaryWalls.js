@@ -2,7 +2,7 @@
 // Wraps the terrain boundary (and hole boundaries) with vertical barrier meshes
 
 import * as THREE from 'three';
-import { WORLD_SCALE } from '../core/Volume.js';
+import { WORLD_SCALE } from '../core/constants.js';
 import { noise2D } from '../terrain/noise.js';
 
 /**
