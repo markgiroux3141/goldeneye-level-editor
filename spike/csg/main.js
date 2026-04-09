@@ -25,6 +25,7 @@ class BrushDef {
         this.isDoorframe = false;  // true for door frame brushes (zone 5 walls + zone 6 floor)
         this.isHoleFrame = false;  // true for generic hole frame brushes (zone 5 all sides)
         this.schemeKey = 'facility_white_tile'; // texture scheme for this brush
+        this.floorY = y; // WT-space anchor for wall texture split (defaults to brush's own minY)
     }
 
     hasTaper() { return Object.keys(this.taper).length > 0; }
@@ -555,8 +556,13 @@ function retextureRoom(schemeName) {
     if (!startBrush || startBrush.isDoorframe || startBrush.isHoleFrame) return;
 
     const roomIds = findRoomBrushes(startBrush);
-    for (const b of brushes) {
-        if (roomIds.has(b.id)) b.schemeKey = schemeName;
+    // Sync the wall texture anchor across the room so a compound room
+    // (multiple stacked brushes) renders one continuous tile/brown split.
+    const roomBrushes = brushes.filter(b => roomIds.has(b.id));
+    const roomFloorY = Math.min(...roomBrushes.map(b => b.minY));
+    for (const b of roomBrushes) {
+        b.schemeKey = schemeName;
+        b.floorY = roomFloorY;
     }
     rebuildCSG();
 }
@@ -607,7 +613,6 @@ function updateCamera(dt) {
     if (keys.has('KeyA')) camera.position.addScaledVector(right, -speed);
     if (keys.has('KeyD')) camera.position.addScaledVector(right, speed);
     if (keys.has('Space')) camera.position.y += speed;
-    if (keys.has('ShiftLeft') || keys.has('ShiftRight')) camera.position.y -= speed;
 }
 
 // ─── Mesh Management ─────────────────────────────────────────────────
@@ -642,11 +647,11 @@ function assignUVsAndZones(geometry, faceIds) {
     const newFaceIds = [];
     const triZones = [];
 
-    const splitY = WALL_SPLIT_V * SCALE; // absolute world-space split height
-
-    // Helper: compute UV from world position for a given face axis
-    function vertexUV(v, axis, rotated = false) {
-        const wx = v.x / SCALE, wy = v.y / SCALE, wz = v.z / SCALE;
+    // Helper: compute UV from world position for a given face axis.
+    // originY shifts the V coordinate of wall faces so the wall texture
+    // anchors to the room's floor instead of world Y=0.
+    function vertexUV(v, axis, rotated = false, originY = 0) {
+        const wx = v.x / SCALE, wy = v.y / SCALE - originY, wz = v.z / SCALE;
         if (rotated) {
             if (axis === 'x') return [wy, wz];
             if (axis === 'z') return [wy, wx];
@@ -663,7 +668,7 @@ function assignUVsAndZones(geometry, faceIds) {
     // Helper: emit a triangle with a given zone, axis, normal, faceId, and scheme.
     // Checks winding matches the intended normal — swaps B/C if flipped.
     const _e1 = new THREE.Vector3(), _e2 = new THREE.Vector3(), _cross = new THREE.Vector3();
-    function emitTri(pA, pB, pC, nx, ny, nz, axis, zone, faceId, schemeKey, rotated = false) {
+    function emitTri(pA, pB, pC, nx, ny, nz, axis, zone, faceId, schemeKey, rotated = false, originY = 0) {
         _e1.subVectors(pB, pA);
         _e2.subVectors(pC, pA);
         _cross.crossVectors(_e1, _e2);
@@ -676,7 +681,7 @@ function assignUVsAndZones(geometry, faceIds) {
         for (const v of [pA, vB, vC]) {
             newPos.push(v.x, v.y, v.z);
             newNormals.push(nx, ny, nz);
-            const [u, uv_v] = vertexUV(v, axis, rotated);
+            const [u, uv_v] = vertexUV(v, axis, rotated, originY);
             newUVs.push(u, uv_v);
         }
     }
@@ -769,6 +774,7 @@ function assignUVsAndZones(geometry, faceIds) {
 
         const ownerBrush = (faceId.brushId !== 0) ? brushes.find(b => b.id === faceId.brushId) : null;
         const scheme = ownerBrush ? ownerBrush.schemeKey : 'facility_white_tile';
+        const originY = ownerBrush ? ownerBrush.floorY : 0;
 
         if (ay >= ax && ay >= az) {
             // Floor or ceiling
@@ -856,14 +862,16 @@ function assignUVsAndZones(geometry, faceIds) {
                     const rotateWall = dfBrush.h !== WALL_THICKNESS;
                     emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 5, faceId, scheme, rotateWall);
                 } else {
-                    // Room wall — split at WALL_SPLIT_V for zone 2/3
+                    // Room wall — split at WALL_SPLIT_V above the brush's floorY for zone 2/3.
+                    // V coord is also shifted by originY so the texture anchors to the room floor.
+                    const splitY = (originY + WALL_SPLIT_V) * SCALE;
                     const minY = Math.min(tri.a.y, tri.b.y, tri.c.y);
                     const maxY = Math.max(tri.a.y, tri.b.y, tri.c.y);
 
                     if (maxY <= splitY) {
-                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 2, faceId, scheme);
+                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 2, faceId, scheme, false, originY);
                     } else if (minY >= splitY) {
-                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 3, faceId, scheme);
+                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 3, faceId, scheme, false, originY);
                     } else {
                         // Triangle crosses the split — clip into sub-triangles
                         const verts = [tri.a, tri.b, tri.c];
@@ -873,14 +881,14 @@ function assignUVsAndZones(geometry, faceIds) {
 
                         if (mid.y <= splitY) {
                             const pMidHi = lerpAtY(mid, hi, splitY);
-                            emitTri(lo, mid, pLoHi, nx, ny, nz, axis, 2, faceId, scheme);
-                            emitTri(mid, pMidHi, pLoHi, nx, ny, nz, axis, 2, faceId, scheme);
-                            emitTri(pLoHi, pMidHi, hi, nx, ny, nz, axis, 3, faceId, scheme);
+                            emitTri(lo, mid, pLoHi, nx, ny, nz, axis, 2, faceId, scheme, false, originY);
+                            emitTri(mid, pMidHi, pLoHi, nx, ny, nz, axis, 2, faceId, scheme, false, originY);
+                            emitTri(pLoHi, pMidHi, hi, nx, ny, nz, axis, 3, faceId, scheme, false, originY);
                         } else {
                             const pLoMid = lerpAtY(lo, mid, splitY);
-                            emitTri(lo, pLoMid, pLoHi, nx, ny, nz, axis, 2, faceId, scheme);
-                            emitTri(pLoMid, mid, pLoHi, nx, ny, nz, axis, 3, faceId, scheme);
-                            emitTri(mid, hi, pLoHi, nx, ny, nz, axis, 3, faceId, scheme);
+                            emitTri(lo, pLoMid, pLoHi, nx, ny, nz, axis, 2, faceId, scheme, false, originY);
+                            emitTri(pLoMid, mid, pLoHi, nx, ny, nz, axis, 3, faceId, scheme, false, originY);
+                            emitTri(mid, hi, pLoHi, nx, ny, nz, axis, 3, faceId, scheme, false, originY);
                         }
                     }
                 }
@@ -1140,6 +1148,7 @@ function pushSelectedFace() {
         const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
         if (side === 'max') { brush[dimKey] += 1; }
         else { brush[axis] -= 1; brush[dimKey] += 1; }
+        if (axis === 'y' && side === 'min') brush.floorY = brush.y;
         selectedFace.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
         activeBrush = null;
         activeSide = null;
@@ -1179,6 +1188,7 @@ function pullSelectedFace() {
         if (brush[dimKey] <= 1) return;
         if (side === 'max') { brush[dimKey] -= 1; }
         else { brush[axis] += 1; brush[dimKey] -= 1; }
+        if (axis === 'y' && side === 'min') brush.floorY = brush.y;
         selectedFace.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
         activeBrush = null;
         activeSide = null;
@@ -1551,11 +1561,13 @@ function growActiveBrush(amount) {
         } else {
             activeBrush[axis] -= amount;
             activeBrush[dimKey] += amount;
+            if (axis === 'y') activeBrush.floorY = activeBrush.y;
         }
     } else {
         if (side === 'max') {
             activeBrush[axis] -= amount;
             activeBrush[dimKey] += amount;
+            if (axis === 'y') activeBrush.floorY = activeBrush.y;
         } else {
             activeBrush[dimKey] += amount;
         }
