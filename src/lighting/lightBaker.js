@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { state } from '../state.js';
 import { WORLD_SCALE } from '../core/constants.js';
-import { platformMeshes, stairRunMeshes } from '../mesh/MeshManager.js';
+import { platformMeshes, stairRunMeshes, csgRegionMeshes } from '../mesh/MeshManager.js';
 import { computeAO } from './ambientOcclusion.js';
 import { storeBakedColors, clearBakedColorStore } from './bakedColorStore.js';
 import { subdivideGeometry } from './subdivide.js';
@@ -18,12 +18,13 @@ const S = WORLD_SCALE;
 const BAKE_SUBDIVISIONS = 2;
 
 // Collect all scene meshes for shadow raycasting.
-// Phase 9 TODO: also include csgRegionMeshes once the spatial-hash bake transfer
-// is implemented (CSG mesh vertex order is unstable across rebuilds).
+// CSG region meshes are included so platform/stair shadows fall on CSG walls,
+// and so CSG self-shadows (one wall blocks another) work too.
 function getOccluders() {
     const meshes = [];
     for (const [, mesh] of platformMeshes) meshes.push(mesh);
     for (const [, mesh] of stairRunMeshes) meshes.push(mesh);
+    for (const [, data] of csgRegionMeshes) meshes.push(data.mesh);
     return meshes;
 }
 
@@ -185,13 +186,24 @@ export function bakeAllLighting(aoSamples = 32) {
     const occluders = getOccluders();
 
     // Bake lighting onto subdivided platform/stair geometry.
-    // Phase 9 TODO: bake CSG region meshes via spatial-hash transfer.
     const ambient = state.bakeAmbient;
     for (const [id, mesh] of platformMeshes) {
         bakeMeshAndChildren(mesh, occluders, lights, aoSamples, 'plat_' + id, ambient);
     }
     for (const [id, mesh] of stairRunMeshes) {
         bakeMeshAndChildren(mesh, occluders, lights, aoSamples, 'stair_' + id, ambient);
+    }
+
+    // Bake CSG region meshes in place. Flavor A: no spatial-hash transfer and no
+    // backing store — colors are written directly into the live mesh's color
+    // attribute. Any subsequent rebuildAllCSG() (geometry edit, view-mode toggle,
+    // retexture) reconstructs the mesh with white vertex colors and clears
+    // state.bakedLighting, so the user must press B to re-bake.
+    // Subdivision is intentionally skipped: assignUVsAndZones already produces
+    // small triangles via splitTrisAtAxis, so a coarse subdivide pass would buy
+    // little and would also be invalidated on the next CSG rebuild.
+    for (const [, data] of csgRegionMeshes) {
+        bakeGeometry(data.mesh.geometry, occluders, lights, aoSamples, ambient);
     }
 
     state.bakedLighting = true;
@@ -226,6 +238,7 @@ export function clearBakedLighting() {
 
     for (const [, mesh] of platformMeshes) resetMeshAndChildren(mesh);
     for (const [, mesh] of stairRunMeshes) resetMeshAndChildren(mesh);
+    for (const [, data] of csgRegionMeshes) resetColors(data.mesh.geometry);
 
     clearBakedColorStore();
     state.bakedLighting = false;

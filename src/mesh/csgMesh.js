@@ -18,11 +18,12 @@ import { getCSGMaterialsForScheme } from '../scene/materials.js';
 export const csgRegionMeshes = new Map();
 
 // Fallback material for grid (non-textured) view mode.
-// Matches the spike's mainMaterial. No vertexColors yet — that comes in Phase 9
-// when the lighting baker is adapted to write vertex colors onto CSG meshes.
+// Matches the spike's mainMaterial. vertexColors is on so baked lighting (which
+// writes per-vertex colors directly into the CSG geometry) is visible in grid
+// mode too — unbaked geometry still reads white-by-default and renders flat.
 const _gridMaterial = new THREE.MeshStandardMaterial({
     color: 0x6688aa, roughness: 0.7, metalness: 0.1,
-    flatShading: true, side: THREE.FrontSide,
+    flatShading: true, side: THREE.FrontSide, vertexColors: true,
 });
 
 function disposeRegion(data) {
@@ -38,6 +39,13 @@ function disposeRegion(data) {
 // `brushes` defaults to state.csg.brushes — production code calls with no args.
 // Tests may pass an explicit brush list to avoid module-state coordination.
 export function rebuildAllCSG(brushes = state.csg.brushes) {
+    // Phase 9 (Flavor A): any rebuild invalidates the baked lighting on CSG.
+    // Vertex colors are stored only on the live mesh's color attribute, and
+    // assignUVsAndZones writes white-by-default for fresh geometry, so once
+    // we tear down the old meshes the bake is gone. Flip the flag so the
+    // platform/stair reapply paths and the HUD know the bake is stale.
+    if (state.bakedLighting) state.bakedLighting = false;
+
     // Tear down existing region meshes
     for (const [, data] of csgRegionMeshes) disposeRegion(data);
     csgRegionMeshes.clear();
@@ -61,6 +69,14 @@ export function rebuildAllCSG(brushes = state.csg.brushes) {
             finalGeo = rawGeo;
             finalFaceIds = rawFaceIds;
             material = _gridMaterial;
+            // Grid material uses vertexColors so baked lighting can paint into
+            // it; seed a white color attribute so unbaked geometry renders the
+            // flat material color rather than black ("Stevie Wonder" bug).
+            if (!finalGeo.getAttribute('color')) {
+                const vertCount = finalGeo.getAttribute('position').count;
+                const whiteColors = new Float32Array(vertCount * 3).fill(1);
+                finalGeo.setAttribute('color', new THREE.Float32BufferAttribute(whiteColors, 3));
+            }
         }
 
         const mesh = new THREE.Mesh(finalGeo, material);
