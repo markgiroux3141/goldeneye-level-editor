@@ -6,8 +6,8 @@
         "zones": {
             "0": { "texture": "grey_tile_floor", "repeat": 0.35 },
             "1": { "texture": "brown_wall", "repeat": 0.10 },
-            "2": { "texture": "white_tile", "repeat": 0.80 },
-            "3": { "texture": "brown_wall", "repeat": 0.10 },
+            "2": { "texture": "white_tile", "repeat": 1.0 },
+            "3": { "texture": "brown_wall", "repeat": 0.5 },
             "4": { "texture": null, "color": "#8B7355" },
             "5": { "texture": "stair_gradient", "repeat": 1.0 },
             "6": { "texture": "floor_doorframe", "repeat": 0.35 }
@@ -24,7 +24,8 @@
             "3": { "texture": "blue_brick_wall", "repeat": 0.25 },
             "4": { "texture": null, "color": "#8B7355" },
             "5": { "texture": "stair_gradient", "repeat": 1.0 },
-            "6": { "texture": "floor_doorframe", "repeat": 0.35 }
+            "6": { "texture": "floor_doorframe", "repeat": 0.35 },
+            "7": { "texture": "white_brace", "repeat": 0.25 }
         }
     },
     "facility_industrial_room": {
@@ -38,7 +39,8 @@
             "3": { "texture": "grey_line_wall", "repeat": 0.18 },
             "4": { "texture": null, "color": "#8B7355" },
             "5": { "texture": "stair_gradient", "repeat": 1.0 },
-            "6": { "texture": "floor_doorframe", "repeat": 0.35 }
+            "6": { "texture": "floor_doorframe", "repeat": 0.35 },
+            "7": { "texture": "white_brace", "repeat": 0.25 }
         }
     }
 }

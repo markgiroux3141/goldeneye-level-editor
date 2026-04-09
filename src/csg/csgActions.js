@@ -12,7 +12,10 @@ import { state } from '../state.js';
 import { BrushDef } from '../core/BrushDef.js';
 import { csgRegionMeshes, rebuildAllCSG } from '../mesh/csgMesh.js';
 import { findRoomBrushes } from '../core/csg/regions.js';
-import { WORLD_SCALE, WALL_THICKNESS, WALL_SPLIT_V } from '../core/constants.js';
+import {
+    WORLD_SCALE, WALL_THICKNESS, WALL_SPLIT_V,
+    MIN_BRACE_DIM, MAX_BRACE_DIM, MIN_PILLAR_SIZE, MAX_PILLAR_SIZE,
+} from '../core/constants.js';
 
 // ─── Constants ──────────────────────────────────────────────────────
 const HOLE_WIDTH = 3;
@@ -145,6 +148,21 @@ export function adjustSelectionSize(deltaU, deltaV) {
     state.csg.activeBrush = null;
     state.csg.activeOp = null;
     state.csg.activeSide = null;
+}
+
+// Adjust brace dimensions before placement (scroll wheel in brace mode).
+// deltaW = width along the wall, deltaD = depth into the room.
+export function adjustBraceSize(deltaW, deltaD) {
+    const csg = state.csg;
+    if (deltaW) csg.braceWidth = Math.max(MIN_BRACE_DIM, Math.min(MAX_BRACE_DIM, csg.braceWidth + deltaW));
+    if (deltaD) csg.braceDepth = Math.max(MIN_BRACE_DIM, Math.min(MAX_BRACE_DIM, csg.braceDepth + deltaD));
+}
+
+// Adjust pillar cross-section size before placement (scroll wheel in pillar mode).
+// Pillars stay square, so a single delta scales both X and Z.
+export function adjustPillarSize(delta) {
+    const csg = state.csg;
+    csg.pillarSize = Math.max(MIN_PILLAR_SIZE, Math.min(MAX_PILLAR_SIZE, csg.pillarSize + delta));
 }
 
 // ─── Push / Pull / Extrude ───────────────────────────────────────────
@@ -532,6 +550,199 @@ export function confirmHolePlacement() {
     csg.selSizeU = 0; csg.selSizeV = 0;
     csg.activeBrush = null; csg.activeOp = null; csg.activeSide = null;
 
+    rebuildAllCSG();
+}
+
+// ─── Brace Modal Tool ───────────────────────────────────────────────
+//
+// A "brace" is a structural decoration shaped like an arch: vertical strip
+// up one wall, horizontal strip across the ceiling, vertical strip down the
+// opposite wall. Three additive brushes per arch, all marked isBrace so
+// uvZones routes every face to zone 7 (the brace texture).
+
+export function setBraceMode(on) {
+    const csg = state.csg;
+    csg.braceMode = !!on;
+    csg.bracePreview = null;
+    if (on) {
+        csg.holeMode = false;
+        csg.doorPreview = null;
+        csg.activeBrush = null;
+        csg.activeOp = null;
+        csg.activeSide = null;
+    }
+}
+
+export function exitBraceMode() {
+    state.csg.braceMode = false;
+    state.csg.bracePreview = null;
+}
+
+// Compute the 3 arch segments (wall1, ceiling, wall2) for a wall hit.
+// Returns the preview shape or null if the face is unsuitable. Stores the
+// preview on state.csg.bracePreview so renderers and confirm can read it.
+export function computeBracePreview(hitFace, hitPoint) {
+    const csg = state.csg;
+    if (!csg.braceMode || !hitFace || !hitPoint) return null;
+    if (hitFace.axis === 'y') return null;  // walls only
+
+    const brush = findBrushById(hitFace.brushId, hitFace.regionId);
+    if (!brush || brush.op !== 'subtract') return null;
+
+    const bw = csg.braceWidth;   // size along the wall (U axis)
+    const bd = csg.braceDepth;   // inward protrusion + ceiling thickness
+    // Burial epsilon: half a WT into surrounding solid. Hides coplanar faces
+    // inside the wall/floor/ceiling material without reaching the shell's
+    // exterior face (walls are 1 WT thick, so 0.5 WT stays safely buried).
+    const E  = WALL_THICKNESS / 2;
+
+    // Use the clicked subtract brush's bounds as the room interior bounds.
+    // For a single-brush rectangular room this gives the correct opposite
+    // wall positions; L-shapes will end at the brush boundary (deferred).
+    const ix0 = brush.minX, ix1 = brush.maxX;
+    const iy0 = brush.minY, iy1 = brush.maxY;
+    const iz0 = brush.minZ, iz1 = brush.maxZ;
+
+    // Each brace brush is extended 1 WT into the surrounding solid on its
+    // hidden faces (the ones flush against walls / floor / ceiling). Burying
+    // those faces inside solid material avoids coplanar CSG artifacts where
+    // three-bvh-csg would otherwise emit stray triangles at the seam.
+    let wall1, ceiling, wall2;
+
+    if (hitFace.axis === 'x') {
+        // Brace runs across X (wall to wall on the X axis).
+        // U coordinate of the brace = Z position of cursor, snapped to WT.
+        const cursorZ = Math.round(hitPoint.z / WORLD_SCALE) - Math.floor(bw / 2);
+        const z0 = Math.max(iz0, Math.min(iz1 - bw, cursorZ));
+
+        // Wall 1: on the min-X wall. Buried into wall (-X), floor (-Y) and ceiling (+Y).
+        wall1   = { x: ix0 - E,  y: iy0 - E,  z: z0, w: bd + E,        h: (iy1 - iy0) + 2 * E, d: bw };
+        // Ceiling: full X interior. Buried into both walls and into ceiling (+Y).
+        ceiling = { x: ix0 - E,  y: iy1 - bd, z: z0, w: (ix1 - ix0) + 2 * E, h: bd + E,        d: bw };
+        // Wall 2: on the max-X wall. Buried into wall (+X), floor (-Y), ceiling (+Y).
+        wall2   = { x: ix1 - bd, y: iy0 - E,  z: z0, w: bd + E,        h: (iy1 - iy0) + 2 * E, d: bw };
+    } else { // axis === 'z'
+        // Brace runs across Z. U = X position of cursor.
+        const cursorX = Math.round(hitPoint.x / WORLD_SCALE) - Math.floor(bw / 2);
+        const x0 = Math.max(ix0, Math.min(ix1 - bw, cursorX));
+
+        wall1   = { x: x0, y: iy0 - E,  z: iz0 - E,  w: bw, h: (iy1 - iy0) + 2 * E, d: bd + E        };
+        ceiling = { x: x0, y: iy1 - bd, z: iz0 - E,  w: bw, h: bd + E,              d: (iz1 - iz0) + 2 * E };
+        wall2   = { x: x0, y: iy0 - E,  z: iz1 - bd, w: bw, h: (iy1 - iy0) + 2 * E, d: bd + E        };
+    }
+
+    csg.bracePreview = {
+        regionId: hitFace.regionId,
+        roomBrushId: brush.id,
+        wall1, ceiling, wall2,
+    };
+    return csg.bracePreview;
+}
+
+export function confirmBracePlacement() {
+    const csg = state.csg;
+    if (!csg.bracePreview) return;
+    const { wall1, ceiling, wall2, roomBrushId, regionId } = csg.bracePreview;
+
+    // Inherit the room brush's scheme so each theme picks up its own zone-7 texture
+    const roomBrush = findBrushById(roomBrushId, regionId);
+    const schemeKey = (roomBrush && roomBrush.schemeKey) || 'facility_white_tile';
+    const floorY    = (roomBrush && roomBrush.floorY)    ?? wall1.y;
+
+    for (const r of [wall1, ceiling, wall2]) {
+        const b = new BrushDef(csg.nextBrushId++, 'add', r.x, r.y, r.z, r.w, r.h, r.d);
+        b.isBrace = true;
+        b.schemeKey = schemeKey;
+        b.floorY = floorY;
+        state.csg.brushes.push(b);
+    }
+
+    csg.braceMode = false;
+    csg.bracePreview = null;
+    rebuildAllCSG();
+}
+
+// ─── Pillar Modal Tool ──────────────────────────────────────────────
+//
+// A "pillar" is a vertical square column from floor to ceiling. Internally
+// it's just an isBrace brush — it inherits the brace texturing path so its
+// appearance per scheme matches arches (zone 7 if defined, wall-split
+// otherwise). The user aims at the floor, clicks, and a single additive
+// brush is created.
+
+export function setPillarMode(on) {
+    const csg = state.csg;
+    csg.pillarMode = !!on;
+    csg.pillarPreview = null;
+    if (on) {
+        csg.braceMode = false;
+        csg.bracePreview = null;
+        csg.holeMode = false;
+        csg.doorPreview = null;
+        csg.activeBrush = null;
+        csg.activeOp = null;
+        csg.activeSide = null;
+    }
+}
+
+export function exitPillarMode() {
+    state.csg.pillarMode = false;
+    state.csg.pillarPreview = null;
+}
+
+// Compute the box for a pillar given a floor hit. Returns the preview shape
+// or null if the face is unsuitable (must be a floor — axis 'y', side 'min').
+export function computePillarPreview(hitFace, hitPoint) {
+    const csg = state.csg;
+    if (!csg.pillarMode || !hitFace || !hitPoint) return null;
+    if (hitFace.axis !== 'y' || hitFace.side !== 'min') return null;
+
+    const brush = findBrushById(hitFace.brushId, hitFace.regionId);
+    if (!brush || brush.op !== 'subtract') return null;
+
+    const ps = csg.pillarSize;
+    const E = WALL_THICKNESS / 2;  // burial epsilon, same as brace
+
+    // Snap cursor X/Z to integer WT and place the pillar centered there
+    // (or as centered as integer offsets allow).
+    const cursorX = Math.round(hitPoint.x / WORLD_SCALE) - Math.floor(ps / 2);
+    const cursorZ = Math.round(hitPoint.z / WORLD_SCALE) - Math.floor(ps / 2);
+
+    // Clamp so the pillar stays inside the room interior
+    const x0 = Math.max(brush.minX, Math.min(brush.maxX - ps, cursorX));
+    const z0 = Math.max(brush.minZ, Math.min(brush.maxZ - ps, cursorZ));
+
+    // Y spans floor to ceiling, with 0.5 WT burial into both
+    const box = {
+        x: x0, y: brush.minY - E, z: z0,
+        w: ps, h: (brush.maxY - brush.minY) + 2 * E, d: ps,
+    };
+
+    csg.pillarPreview = {
+        regionId: hitFace.regionId,
+        roomBrushId: brush.id,
+        box,
+    };
+    return csg.pillarPreview;
+}
+
+export function confirmPillarPlacement() {
+    const csg = state.csg;
+    if (!csg.pillarPreview) return;
+    const { box, roomBrushId, regionId } = csg.pillarPreview;
+
+    const roomBrush = findBrushById(roomBrushId, regionId);
+    const schemeKey = (roomBrush && roomBrush.schemeKey) || 'facility_white_tile';
+    const floorY    = (roomBrush && roomBrush.floorY)    ?? box.y;
+
+    const b = new BrushDef(csg.nextBrushId++, 'add', box.x, box.y, box.z, box.w, box.h, box.d);
+    b.isBrace = true;       // share the brace texturing path
+    b.schemeKey = schemeKey;
+    b.floorY = floorY;
+    state.csg.brushes.push(b);
+
+    csg.pillarMode = false;
+    csg.pillarPreview = null;
     rebuildAllCSG();
 }
 

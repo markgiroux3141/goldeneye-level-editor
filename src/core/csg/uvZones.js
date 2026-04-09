@@ -6,7 +6,7 @@
 // frame boundaries (so frame interiors get tunnel textures), split walls at the
 // vertical zone-2/3 boundary, and compute UVs from world-space positions.
 //
-// Material layout in the returned array: schemeIndex × 7 + zone, where:
+// Material layout in the returned array: schemeIndex × 8 + zone, where:
 //   zone 0 = floor, 1 = ceiling, 2 = lower wall, 3 = upper wall,
 //   zone 5 = tunnel wall (door/hole frame), 6 = tunnel floor (door frame floor)
 //
@@ -14,7 +14,7 @@
 //   geometry: raw CSG output BufferGeometry
 //   faceIds:  per-triangle face identity from buildFaceMap
 //   brushes:  array of BrushDefs that produced this geometry (used for frame AABBs and per-brush schemes)
-//   getMaterialsForScheme(schemeKey) → array of 7 THREE.Materials (zones 0-6)
+//   getMaterialsForScheme(schemeKey) → array of 8 THREE.Materials (zones 0-7)
 //
 // Returns: { geometry, faceIds, materials }
 
@@ -139,6 +139,21 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
     const edge1 = new THREE.Vector3(), edge2 = new THREE.Vector3();
     const normal = new THREE.Vector3();
 
+    // Per-scheme cache: does the scheme define its own zone-7 brace texture?
+    // If yes, brace brushes route every face to zone 7 (white_brace etc).
+    // If no, brace brushes fall through to normal wall/floor/ceiling
+    // classification so they inherit the room's wall split — useful for
+    // schemes (like facility_white_tile) where the brace should look like
+    // an integral part of the wall.
+    const schemeBraceCache = new Map();
+    function schemeHasBraceZone(schemeKey) {
+        if (!schemeBraceCache.has(schemeKey)) {
+            const mats = getMaterialsForScheme(schemeKey);
+            schemeBraceCache.set(schemeKey, !!(mats && mats[7]));
+        }
+        return schemeBraceCache.get(schemeKey);
+    }
+
     for (let t = 0; t < triCount; t++) {
         const i0 = idx ? idx.getX(t * 3) : t * 3;
         const i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1;
@@ -159,6 +174,17 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
         const ownerBrush = (faceId.brushId !== 0) ? brushes.find(b => b.id === faceId.brushId) : null;
         const scheme = ownerBrush ? ownerBrush.schemeKey : 'facility_white_tile';
         const originY = ownerBrush ? ownerBrush.floorY : 0;
+
+        // Brace brushes: if the scheme defines a dedicated zone-7 brace texture,
+        // route every face there regardless of normal direction. Otherwise fall
+        // through to normal wall/floor/ceiling classification so the brace
+        // inherits the room's wall split (useful for schemes where the brace
+        // should look like an integral part of the wall).
+        if (ownerBrush && ownerBrush.isBrace && schemeHasBraceZone(scheme)) {
+            const braceAxis = ay >= ax && ay >= az ? 'y' : (ax >= az ? 'x' : 'z');
+            emitTri(vA.clone(), vB.clone(), vC.clone(), nx, ny, nz, braceAxis, 7, faceId, scheme, false, originY);
+            continue;
+        }
 
         if (ay >= ax && ay >= az) {
             // Floor or ceiling
@@ -287,7 +313,7 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
     newGeo.setAttribute('color', new THREE.Float32BufferAttribute(newColors, 3));
 
     // Build combined material array for all schemes in use.
-    // Layout: schemeIndex * 7 + zone. Zones 5,6 are shared (fixed tunnel textures).
+    // Layout: schemeIndex * 8 + zone. Zones 5,6 are shared (fixed tunnel textures); zone 7 = brace.
     const uniqueSchemes = [...new Set(triSchemes)].sort();
     const schemeIndexMap = {};
     const combinedMaterials = [];
@@ -295,20 +321,20 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
     for (let si = 0; si < uniqueSchemes.length; si++) {
         schemeIndexMap[uniqueSchemes[si]] = si;
         const mats = getMaterialsForScheme(uniqueSchemes[si]);
-        if (mats) {
-            for (let z = 0; z <= 6; z++) combinedMaterials.push(mats[z]);
-        } else {
-            // Fallback: 7 magenta materials
-            for (let z = 0; z <= 6; z++) {
-                combinedMaterials.push(new THREE.MeshLambertMaterial({ color: 0xff00ff, side: THREE.FrontSide }));
-            }
+        for (let z = 0; z <= 7; z++) {
+            // Pad missing zones (e.g. schemes without a brace zone 7) with a
+            // magenta sentinel so the stride is consistent. Sentinel slots
+            // should never actually be referenced — uvZones routes brace
+            // triangles elsewhere when the scheme has no zone 7.
+            const m = mats && mats[z];
+            combinedMaterials.push(m || new THREE.MeshLambertMaterial({ color: 0xff00ff, side: THREE.FrontSide }));
         }
     }
 
     // Compute material index per triangle
     const triMatIndices = triZones.map((zone, i) => {
         const si = schemeIndexMap[triSchemes[i]] || 0;
-        return si * 7 + zone;
+        return si * 8 + zone;
     });
 
     // Sort triangles by material index and emit groups

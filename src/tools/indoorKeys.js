@@ -64,6 +64,20 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             setTool('light');
             return;
         }
+        if (hotkeyManager.matches('tool_brace', e)) {
+            e.preventDefault();
+            setTool('csg');
+            csgActions.setBraceMode(true);
+            showMessage('BRACE mode — aim at a wall, click to place arch');
+            return;
+        }
+        if (hotkeyManager.matches('tool_pillar', e)) {
+            e.preventDefault();
+            setTool('csg');
+            csgActions.setPillarMode(true);
+            showMessage('PILLAR mode — aim at floor, scroll to size, click to place');
+            return;
+        }
     }
 
     // M key to switch to terrain
@@ -143,12 +157,18 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             csgActions.deleteSelectedBrush();
             return;
         }
-        // Escape = cancel hole mode or deselect
+        // Escape = cancel hole/brace mode or deselect
         if (hotkeyManager.matches('escape', e)) {
             e.preventDefault();
             if (state.csg.holeMode) {
                 csgActions.exitHoleMode();
                 showMessage('Hole mode cancelled');
+            } else if (state.csg.braceMode) {
+                csgActions.exitBraceMode();
+                showMessage('Brace mode cancelled');
+            } else if (state.csg.pillarMode) {
+                csgActions.exitPillarMode();
+                showMessage('Pillar mode cancelled');
             } else {
                 state.csg.selectedFace = null;
                 state.csg.activeBrush = null;

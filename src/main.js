@@ -22,7 +22,7 @@ import { terrainMeshes, rebuildPlatform, rebuildConnectedStairRuns, rebuildTerra
 import { BrushDef } from './core/BrushDef.js';
 import { updatePlatformPreview } from './preview/platformPreview.js';
 import { updateTerrainPreview } from './preview/terrainPreview.js';
-import { updateCSGSelectionPreview, updateCSGHolePreview } from './preview/csgPreviews.js';
+import { updateCSGSelectionPreview, updateCSGHolePreview, updateCSGBracePreview, updateCSGPillarPreview } from './preview/csgPreviews.js';
 import * as csgActions from './csg/csgActions.js';
 import { updateTerrainHUD } from './hud/terrainHud.js';
 import { initToolManager, toggleEditorMode, getActiveTerrain } from './tools/ToolManager.js';
@@ -89,12 +89,28 @@ document.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('wheel', (e) => {
     if (state.editorMode === 'terrain') { handleTerrainWheel(e); return; }
-    // CSG tool: scroll adjusts selection U size, Shift+scroll adjusts V size
-    if (state.tool === 'csg' && isPointerLocked() && state.csg.selectedFace) {
+    if (state.tool !== 'csg' || !isPointerLocked()) return;
+
+    const delta = e.deltaY > 0 ? -1 : 1;
+
+    // Brace mode: scroll adjusts width, Shift+scroll adjusts depth
+    if (state.csg.braceMode) {
         e.preventDefault();
-        const delta = e.deltaY > 0 ? -1 : 1;
+        if (e.shiftKey) csgActions.adjustBraceSize(0, delta);
+        else            csgActions.adjustBraceSize(delta, 0);
+        return;
+    }
+    // Pillar mode: scroll adjusts the square cross-section size
+    if (state.csg.pillarMode) {
+        e.preventDefault();
+        csgActions.adjustPillarSize(delta);
+        return;
+    }
+    // CSG selection: scroll adjusts selection U size, Shift+scroll adjusts V size
+    if (state.csg.selectedFace) {
+        e.preventDefault();
         if (e.shiftKey) csgActions.adjustSelectionSize(0, delta);
-        else csgActions.adjustSelectionSize(delta, 0);
+        else            csgActions.adjustSelectionSize(delta, 0);
     }
 }, { passive: false });
 
@@ -382,6 +398,8 @@ function animate() {
     updatePlatformPreview(camera);
     updateCSGSelectionPreview(camera);
     updateCSGHolePreview(camera);
+    updateCSGBracePreview(camera);
+    updateCSGPillarPreview(camera);
     updateHUD(camera);
     renderer.render(scene, camera);
 }

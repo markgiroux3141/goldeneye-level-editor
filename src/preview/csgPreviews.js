@@ -11,12 +11,13 @@ import { isPointerLocked } from '../input/input.js';
 import { csgRegionMeshes } from '../mesh/csgMesh.js';
 import { pickCSGFace } from '../raycaster.js';
 import {
-    facesMatch, getSelectedFaceInfo, worldToFaceUV, computeHolePreview,
+    facesMatch, getSelectedFaceInfo, worldToFaceUV, computeHolePreview, computeBracePreview, computePillarPreview,
 } from '../csg/csgActions.js';
 import { WORLD_SCALE } from '../core/constants.js';
 
 const SEL_OFFSET = 0.002;
 const HOLE_OFFSET = 0.003;
+const BRACE_OFFSET = 0.003;
 
 let selectionMesh = null;
 const selectionMat = new THREE.MeshBasicMaterial({
@@ -31,6 +32,15 @@ const holeMat = new THREE.MeshBasicMaterial({
     side: THREE.DoubleSide, depthTest: true,
     polygonOffset: true, polygonOffsetFactor: -2,
 });
+
+let braceMeshes = [];
+const braceMat = new THREE.MeshBasicMaterial({
+    color: 0xffcc00, transparent: true, opacity: 0.5,
+    side: THREE.DoubleSide, depthTest: true,
+    polygonOffset: true, polygonOffsetFactor: -2,
+});
+
+let pillarMesh = null;
 
 function disposeMesh(mesh) {
     if (!mesh) return;
@@ -134,4 +144,70 @@ export function updateCSGHolePreview(camera) {
     const geo = buildFaceQuad(preview.face, preview.u0, preview.u1, preview.v0, preview.v1, HOLE_OFFSET);
     holeMesh = new THREE.Mesh(geo, holeMat);
     scene.add(holeMesh);
+}
+
+// Build a translucent box for an arch segment given WT-space {x,y,z,w,h,d}.
+// `inset` shrinks the box slightly inside its bounds so it doesn't z-fight
+// with whatever wall/ceiling face it sits flush against.
+function buildBraceBox(r, inset) {
+    const sx = r.w * WORLD_SCALE - 2 * inset;
+    const sy = r.h * WORLD_SCALE - 2 * inset;
+    const sz = r.d * WORLD_SCALE - 2 * inset;
+    const geo = new THREE.BoxGeometry(sx, sy, sz);
+    const cx = (r.x + r.w / 2) * WORLD_SCALE;
+    const cy = (r.y + r.h / 2) * WORLD_SCALE;
+    const cz = (r.z + r.d / 2) * WORLD_SCALE;
+    geo.translate(cx, cy, cz);
+    return geo;
+}
+
+// Update the yellow brace arch preview while in brace mode.
+export function updateCSGBracePreview(camera) {
+    for (const m of braceMeshes) disposeMesh(m);
+    braceMeshes = [];
+
+    if (!state.csg.braceMode || !isPointerLocked()) {
+        state.csg.bracePreview = null;
+        return;
+    }
+
+    const hit = pickCSGFace(camera, csgRegionMeshes);
+    if (!hit) {
+        state.csg.bracePreview = null;
+        return;
+    }
+
+    const preview = computeBracePreview(hit, hit.point);
+    if (!preview) return;
+
+    for (const r of [preview.wall1, preview.ceiling, preview.wall2]) {
+        const geo = buildBraceBox(r, BRACE_OFFSET);
+        const mesh = new THREE.Mesh(geo, braceMat);
+        scene.add(mesh);
+        braceMeshes.push(mesh);
+    }
+}
+
+// Update the yellow pillar preview while in pillar mode.
+export function updateCSGPillarPreview(camera) {
+    disposeMesh(pillarMesh);
+    pillarMesh = null;
+
+    if (!state.csg.pillarMode || !isPointerLocked()) {
+        state.csg.pillarPreview = null;
+        return;
+    }
+
+    const hit = pickCSGFace(camera, csgRegionMeshes);
+    if (!hit) {
+        state.csg.pillarPreview = null;
+        return;
+    }
+
+    const preview = computePillarPreview(hit, hit.point);
+    if (!preview) return;
+
+    const geo = buildBraceBox(preview.box, BRACE_OFFSET);
+    pillarMesh = new THREE.Mesh(geo, braceMat);
+    scene.add(pillarMesh);
 }

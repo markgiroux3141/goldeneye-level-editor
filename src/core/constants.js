@@ -5,7 +5,7 @@ export const WALL_THICKNESS = 1;    // 1 WT = the fundamental unit
 export const WORLD_SCALE = 0.25;    // 1 WT = 0.25 Three.js meters
 
 // CSG texturing
-export const WALL_SPLIT_V = 4;      // WT height where lower wall meets upper wall
+export const WALL_SPLIT_V = 6;      // WT height where lower wall meets upper wall
 export const CSG_CENTROID_TOL = 0.5; // tolerance (WT) for face identity recovery
 
 // Editor defaults
@@ -20,6 +20,14 @@ export const DEFAULT_STAIR_STEP_HEIGHT = 1;
 export const DEFAULT_STAIR_RISE_OVER_RUN = 1;
 export const DEFAULT_EXTRUDE_WIDTH = 1;
 export const DEFAULT_EXTRUDE_HEIGHT = 1;
+export const DEFAULT_BRACE_WIDTH = 1;   // WT — size along the wall (U axis)
+export const DEFAULT_BRACE_DEPTH = 1;   // WT — protrusion into the room
+export const BRACE_ZONE = 7;            // material zone index for brace faces
+export const MIN_BRACE_DIM = 1;
+export const MAX_BRACE_DIM = 8;
+export const DEFAULT_PILLAR_SIZE = 1;   // WT — square cross-section side length
+export const MIN_PILLAR_SIZE = 1;
+export const MAX_PILLAR_SIZE = 8;
 
 // Brush defaults
 export const DEFAULT_BRUSH_RADIUS = 8;

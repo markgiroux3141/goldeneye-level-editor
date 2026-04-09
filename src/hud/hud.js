@@ -138,6 +138,11 @@ export function updateHUD(camera) {
             lines.push(`Slide along edge — click to place stairs`);
         }
     } else if (state.tool === 'csg') {
+        if (state.csg.braceMode) {
+            lines.push(`Brace: ${state.csg.braceWidth}W x ${state.csg.braceDepth}D (scroll/shift-scroll to size)`);
+        } else if (state.csg.pillarMode) {
+            lines.push(`Pillar: ${state.csg.pillarSize}x${state.csg.pillarSize} (scroll to size)`);
+        }
         const sel = state.csg.selectedFace;
         if (sel) {
             const brush = state.csg.brushes.find(b => b.id === sel.brushId);

@@ -6,7 +6,7 @@ import { isPointerLocked } from '../input/input.js';
 import { showMessage } from '../hud/hud.js';
 import { pickCSGFace, pickPlatform, pickStairRun, pickLight, pickAny } from '../raycaster.js';
 import { snapToWTGrid } from '../actions.js';
-import { selectFaceAtCrosshair, confirmHolePlacement } from '../csg/csgActions.js';
+import { selectFaceAtCrosshair, confirmHolePlacement, confirmBracePlacement, confirmPillarPlacement } from '../csg/csgActions.js';
 import { csgRegionMeshes } from '../mesh/csgMesh.js';
 import { Platform } from '../core/Platform.js';
 import { StairRun } from '../core/StairRun.js';
@@ -24,8 +24,18 @@ import { DEFAULT_LIGHT_Y_OFFSET } from '../core/constants.js';
 export function handleIndoorClick(e, { gizmo, camera }) {
     if (!isPointerLocked() || e.button !== 0) return;
 
-    // CSG tool — click selects faces; in hole mode, click confirms placement
+    // CSG tool — click selects faces; in hole/brace/pillar mode, click confirms placement
     if (state.tool === 'csg') {
+        if (state.csg.pillarMode) {
+            saveUndoState();
+            confirmPillarPlacement();
+            return;
+        }
+        if (state.csg.braceMode) {
+            saveUndoState();
+            confirmBracePlacement();
+            return;
+        }
         if (state.csg.holeMode) {
             saveUndoState();
             confirmHolePlacement();

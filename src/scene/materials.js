@@ -118,7 +118,7 @@ export function getDoorExitMaterial() {
 }
 
 // Build material array for a specific texture scheme.
-// Returns array of 7 materials indexed by zone (0-6).
+// Returns array of 8 materials indexed by zone (0-7).
 export function getTexturedMaterialArrayForScheme(schemeName) {
     const scheme = TEXTURE_SCHEMES[schemeName] || TEXTURE_SCHEMES.facility_white_tile;
 

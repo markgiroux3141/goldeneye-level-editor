@@ -10,6 +10,7 @@ import {
     DEFAULT_STAIR_WIDTH, DEFAULT_STAIR_STEP_HEIGHT, DEFAULT_STAIR_RISE_OVER_RUN,
     DEFAULT_BRUSH_RADIUS, DEFAULT_BRUSH_STRENGTH, DEFAULT_BRUSH_NOISE_SCALE, DEFAULT_BRUSH_NOISE_AMP,
     DEFAULT_BAKE_AMBIENT, MAX_UNDO,
+    DEFAULT_BRACE_WIDTH, DEFAULT_BRACE_DEPTH, DEFAULT_PILLAR_SIZE,
 } from './core/constants.js';
 
 export const state = {
@@ -35,6 +36,15 @@ export const state = {
         holeMode: false,
         holeDoor: false,
         doorPreview: null,      // { face, u0, u1, v0, v1 }
+        // Brace modal tool state
+        braceMode: false,
+        bracePreview: null,     // { regionId, wall1, ceiling, wall2 }
+        braceWidth: DEFAULT_BRACE_WIDTH,
+        braceDepth: DEFAULT_BRACE_DEPTH,
+        // Pillar modal tool state
+        pillarMode: false,
+        pillarPreview: null,    // { regionId, roomBrushId, box }
+        pillarSize: DEFAULT_PILLAR_SIZE,
     },
 
     tool: 'csg',            // 'csg' | 'platform' | 'light'
