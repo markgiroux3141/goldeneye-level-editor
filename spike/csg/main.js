@@ -22,7 +22,8 @@ class BrushDef {
         // Per-face taper: key = 'x-min'|'x-max'|'y-min'|'y-max'|'z-min'|'z-max'
         // value = { u: number, v: number } — symmetric inset in WT on each edge
         this.taper = {};
-        this.isDoorframe = false;  // true for door frame brushes (fixed texture, room boundary)
+        this.isDoorframe = false;  // true for door frame brushes (zone 5 walls + zone 6 floor)
+        this.isHoleFrame = false;  // true for generic hole frame brushes (zone 5 all sides)
         this.schemeKey = 'facility_white_tile'; // texture scheme for this brush
     }
 
@@ -181,7 +182,10 @@ let activeOp = null;       // 'push' | 'pull' | 'extrude'
 let activeSide = null;     // original face side when operation started
 
 // Door tool state
-let doorMode = false;      // T toggles door placement mode
+let holeMode = false;      // T toggles hole placement mode
+let holeDoor = false;      // true = door preset (floor-anchored, zone 6 floor)
+const HOLE_WIDTH = 3;      // default hole width in WT
+const HOLE_HEIGHT = 3;     // default hole height in WT
 const DOOR_WIDTH = 3;      // door width in WT
 const DOOR_HEIGHT = 7;     // door height in WT
 let doorPreviewU0 = 0, doorPreviewU1 = 0, doorPreviewV0 = 0, doorPreviewV1 = 0;
@@ -535,7 +539,7 @@ function findRoomBrushes(startBrush) {
         for (const other of brushes) {
             if (room.has(other.id)) continue;
             if (other.op !== 'subtract') continue;
-            if (other.isDoorframe) continue; // doors are boundaries
+            if (other.isDoorframe || other.isHoleFrame) continue; // frames are boundaries
             if (brushesTouching(current, other)) {
                 room.add(other.id);
                 queue.push(other);
@@ -548,7 +552,7 @@ function findRoomBrushes(startBrush) {
 function retextureRoom(schemeName) {
     if (!selectedFace || selectedFace.brushId === 0) return;
     const startBrush = brushes.find(b => b.id === selectedFace.brushId);
-    if (!startBrush || startBrush.isDoorframe) return;
+    if (!startBrush || startBrush.isDoorframe || startBrush.isHoleFrame) return;
 
     const roomIds = findRoomBrushes(startBrush);
     for (const b of brushes) {
@@ -732,9 +736,9 @@ function assignUVsAndZones(geometry, faceIds) {
         return result;
     }
 
-    // Collect doorframe 3D AABBs in world-space for boundary splitting
-    const doorAABBs = brushes
-        .filter(b => b.isDoorframe)
+    // Collect frame (door + hole) 3D AABBs in world-space for boundary splitting
+    const frameAABBs = brushes
+        .filter(b => b.isDoorframe || b.isHoleFrame)
         .map(b => ({
             minX: b.minX * SCALE, maxX: b.maxX * SCALE,
             minY: b.minY * SCALE, maxY: b.maxY * SCALE,
@@ -772,7 +776,7 @@ function assignUVsAndZones(geometry, faceIds) {
             if (normal.y > 0) {
                 // Floor — split along doorframe XZ boundaries, classify inside/outside
                 let floorTris = [{ a: vA.clone(), b: vB.clone(), c: vC.clone() }];
-                for (const db of doorAABBs) {
+                for (const db of frameAABBs) {
                     floorTris = splitTrisAtAxis(floorTris, 'x', db.minX);
                     floorTris = splitTrisAtAxis(floorTris, 'x', db.maxX);
                     floorTris = splitTrisAtAxis(floorTris, 'z', db.minZ);
@@ -780,23 +784,25 @@ function assignUVsAndZones(geometry, faceIds) {
                 }
                 for (const tri of floorTris) {
                     const cx = (tri.a.x + tri.b.x + tri.c.x) / 3;
+                    const cy = (tri.a.y + tri.b.y + tri.c.y) / 3;
                     const cz = (tri.a.z + tri.b.z + tri.c.z) / 3;
                     let dfBrush = null;
-                    for (const db of doorAABBs) {
-                        if (cx >= db.minX && cx <= db.maxX && cz >= db.minZ && cz <= db.maxZ) {
+                    for (const db of frameAABBs) {
+                        if (cx >= db.minX && cx <= db.maxX && cy >= db.minY && cy <= db.maxY && cz >= db.minZ && cz <= db.maxZ) {
                             dfBrush = db.brush; break;
                         }
                     }
                     if (dfBrush) {
-                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 6, faceId, scheme, dfBrush.w === WALL_THICKNESS);
+                        const floorZone = dfBrush.isDoorframe ? 6 : 5; // door = tunnel floor, hole = wall texture
+                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, floorZone, faceId, scheme, dfBrush.w === WALL_THICKNESS);
                     } else {
                         emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 0, faceId, scheme);
                     }
                 }
             } else {
-                // Ceiling — split along doorframe XZ boundaries, classify lintel vs room ceiling
+                // Ceiling — split along frame XZ boundaries, classify lintel vs room ceiling
                 let ceilTris = [{ a: vA.clone(), b: vB.clone(), c: vC.clone() }];
-                for (const db of doorAABBs) {
+                for (const db of frameAABBs) {
                     ceilTris = splitTrisAtAxis(ceilTris, 'x', db.minX);
                     ceilTris = splitTrisAtAxis(ceilTris, 'x', db.maxX);
                     ceilTris = splitTrisAtAxis(ceilTris, 'z', db.minZ);
@@ -807,7 +813,7 @@ function assignUVsAndZones(geometry, faceIds) {
                     const cy = (tri.a.y + tri.b.y + tri.c.y) / 3;
                     const cz = (tri.a.z + tri.b.z + tri.c.z) / 3;
                     let dfBrush = null;
-                    for (const db of doorAABBs) {
+                    for (const db of frameAABBs) {
                         if (cx >= db.minX && cx <= db.maxX && cy >= db.minY && cy <= db.maxY && cz >= db.minZ && cz <= db.maxZ) {
                             dfBrush = db.brush; break;
                         }
@@ -824,7 +830,7 @@ function assignUVsAndZones(geometry, faceIds) {
             const axis = ax >= az ? 'x' : 'z';
 
             let wallTris = [{ a: vA.clone(), b: vB.clone(), c: vC.clone() }];
-            for (const db of doorAABBs) {
+            for (const db of frameAABBs) {
                 if (axis === 'x') {
                     wallTris = splitTrisAtAxis(wallTris, 'z', db.minZ);
                     wallTris = splitTrisAtAxis(wallTris, 'z', db.maxZ);
@@ -840,14 +846,15 @@ function assignUVsAndZones(geometry, faceIds) {
                 const cy = (tri.a.y + tri.b.y + tri.c.y) / 3;
                 const cz = (tri.a.z + tri.b.z + tri.c.z) / 3;
                 let dfBrush = null;
-                for (const db of doorAABBs) {
+                for (const db of frameAABBs) {
                     if (cx >= db.minX && cx <= db.maxX && cy >= db.minY && cy <= db.maxY && cz >= db.minZ && cz <= db.maxZ) {
                         dfBrush = db.brush; break;
                     }
                 }
                 if (dfBrush) {
-                    // Doorframe wall — zone 5, rotated UVs
-                    emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 5, faceId, scheme, true);
+                    // Frame wall — zone 5, rotate UVs only for wall-axis holes (not Y-axis)
+                    const rotateWall = dfBrush.h !== WALL_THICKNESS;
+                    emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 5, faceId, scheme, rotateWall);
                 } else {
                     // Room wall — split at WALL_SPLIT_V for zone 2/3
                     const minY = Math.min(tri.a.y, tri.b.y, tri.c.y);
@@ -1285,23 +1292,26 @@ function scaleSelectedFace(deltaU, deltaV) {
     updateHUD();
 }
 
-// ─── Door Tool ──────────────────────────────────────────────────────
-// T toggles door mode. In door mode, a yellow outline follows the crosshair
-// showing where a 3×7 door will be placed. Click to place.
-// A door is two subtractive brushes:
-//   1. Doorframe: cuts through the wall (WALL_THICKNESS deep)
+// ─── Hole / Door Tool ───────────────────────────────────────────────
+// T toggles hole mode (free-positioned rectangular cutout on any face).
+// Shift+T toggles door mode (floor-anchored on walls only).
+// Both create two subtractive brushes:
+//   1. Frame: cuts through the wall/floor/ceiling (WALL_THICKNESS deep)
 //   2. Protoroom: same footprint on the far side, user can push to expand
 
-let doorPreviewMesh = null;
-const doorPreviewMat = new THREE.MeshBasicMaterial({
+let holePreviewMesh = null;
+const holePreviewMat = new THREE.MeshBasicMaterial({
     color: 0xffcc00, transparent: true, opacity: 0.4,
     side: THREE.DoubleSide, depthTest: true,
     polygonOffset: true, polygonOffsetFactor: -2,
 });
 
-function updateDoorPreview() {
-    if (doorPreviewMesh) { scene.remove(doorPreviewMesh); doorPreviewMesh.geometry.dispose(); doorPreviewMesh = null; }
-    if (!doorMode || !csgMesh || !isLocked) return;
+function updateHolePreview() {
+    if (holePreviewMesh) { scene.remove(holePreviewMesh); holePreviewMesh.geometry.dispose(); holePreviewMesh = null; }
+    if (!holeMode || !csgMesh || !isLocked) return;
+
+    const holeW = holeDoor ? DOOR_WIDTH : HOLE_WIDTH;
+    const holeH = holeDoor ? DOOR_HEIGHT : HOLE_HEIGHT;
 
     // Raycast to find which face we're looking at
     const raycaster = new THREE.Raycaster();
@@ -1312,8 +1322,8 @@ function updateDoorPreview() {
     const hitFaceId = currentFaceIds[hits[0].faceIndex];
     if (!hitFaceId) { doorPreviewFace = null; return; }
 
-    // Only allow doors on walls (not floor/ceiling)
-    if (hitFaceId.axis === 'y') { doorPreviewFace = null; return; }
+    // Door mode: walls only. Hole mode: any face.
+    if (holeDoor && hitFaceId.axis === 'y') { doorPreviewFace = null; return; }
 
     // Get face info for bounds checking
     const brush = brushes.find(b => b.id === hitFaceId.brushId)
@@ -1321,28 +1331,36 @@ function updateDoorPreview() {
     if (!brush) { doorPreviewFace = null; return; }
 
     const info = getFaceUVInfo(brush, hitFaceId.axis);
-    if (!info || info.uSize < DOOR_WIDTH || info.vSize < DOOR_HEIGHT) { doorPreviewFace = null; return; }
+    if (!info || info.uSize < holeW || info.vSize < holeH) { doorPreviewFace = null; return; }
 
-    // Compute door placement — centered on crosshair U, floor-anchored on V
     const uv = worldToFaceUV(hits[0].point, hitFaceId.axis);
 
-    let u0 = Math.round(uv.u - DOOR_WIDTH / 2);
-    u0 = Math.max(info.uMin, Math.min(u0, info.uMax - DOOR_WIDTH));
-    const u1 = u0 + DOOR_WIDTH;
+    // Center U on crosshair, clamp to face bounds
+    let u0 = Math.round(uv.u - holeW / 2);
+    u0 = Math.max(info.uMin, Math.min(u0, info.uMax - holeW));
+    const u1 = u0 + holeW;
 
-    // Floor-anchored: door starts at the bottom of the face
-    const v0 = info.vMin;
-    const v1 = v0 + DOOR_HEIGHT;
+    let v0, v1;
+    if (holeDoor) {
+        // Door: floor-anchored
+        v0 = info.vMin;
+        v1 = v0 + holeH;
+    } else {
+        // Hole: center V on crosshair, clamp to face bounds
+        v0 = Math.round(uv.v - holeH / 2);
+        v0 = Math.max(info.vMin, Math.min(v0, info.vMax - holeH));
+        v1 = v0 + holeH;
+    }
 
     doorPreviewU0 = u0; doorPreviewU1 = u1;
     doorPreviewV0 = v0; doorPreviewV1 = v1;
     doorPreviewFace = hitFaceId;
 
     // Render yellow outline
-    renderDoorPreviewQuad(hitFaceId, u0, u1, v0, v1);
+    renderHolePreviewQuad(hitFaceId, u0, u1, v0, v1);
 }
 
-function renderDoorPreviewQuad(face, u0, u1, v0, v1) {
+function renderHolePreviewQuad(face, u0, u1, v0, v1) {
     const { axis, side, position } = face;
     const pos = position * SCALE;
     const offset = side === 'min' ? 0.003 : -0.003;
@@ -1352,65 +1370,86 @@ function renderDoorPreviewQuad(face, u0, u1, v0, v1) {
         x0 = x1 = pos + offset;
         z0 = u0 * SCALE; z1 = u1 * SCALE;
         y0 = v0 * SCALE; y1 = v1 * SCALE;
+    } else if (axis === 'y') {
+        y0 = y1 = pos + offset;
+        x0 = u0 * SCALE; x1 = u1 * SCALE;
+        z0 = v0 * SCALE; z1 = v1 * SCALE;
     } else {
         z0 = z1 = pos + offset;
         x0 = u0 * SCALE; x1 = u1 * SCALE;
         y0 = v0 * SCALE; y1 = v1 * SCALE;
     }
 
-    const positions = new Float32Array(axis === 'x' ? [
-        x0, y0, z0,  x0, y1, z0,  x0, y1, z1,
-        x0, y0, z0,  x0, y1, z1,  x0, y0, z1,
-    ] : [
-        x0, y0, z0,  x0, y1, z0,  x1, y1, z0,
-        x0, y0, z0,  x1, y1, z0,  x1, y0, z0,
-    ]);
+    let positions;
+    if (axis === 'x') {
+        positions = new Float32Array([
+            x0, y0, z0,  x0, y1, z0,  x0, y1, z1,
+            x0, y0, z0,  x0, y1, z1,  x0, y0, z1,
+        ]);
+    } else if (axis === 'y') {
+        positions = new Float32Array([
+            x0, y0, z0,  x1, y0, z0,  x1, y0, z1,
+            x0, y0, z0,  x1, y0, z1,  x0, y0, z1,
+        ]);
+    } else {
+        positions = new Float32Array([
+            x0, y0, z0,  x0, y1, z0,  x1, y1, z0,
+            x0, y0, z0,  x1, y1, z0,  x1, y0, z0,
+        ]);
+    }
 
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geo.computeVertexNormals();
-    doorPreviewMesh = new THREE.Mesh(geo, doorPreviewMat);
-    scene.add(doorPreviewMesh);
+    holePreviewMesh = new THREE.Mesh(geo, holePreviewMat);
+    scene.add(holePreviewMesh);
 }
 
-function confirmDoorPlacement() {
+function confirmHolePlacement() {
     if (!doorPreviewFace) return;
 
     const { axis, side, position } = doorPreviewFace;
     const t = WALL_THICKNESS;
     const u0 = doorPreviewU0, u1 = doorPreviewU1;
     const v0 = doorPreviewV0, v1 = doorPreviewV1;
+    const uSize = u1 - u0, vSize = v1 - v0;
 
+    // Build frame and protoroom boxes for any axis.
+    // The frame cuts through the wall (t deep along axis).
+    // The protoroom sits on the far side, also t deep.
     let fx, fy, fz, fw, fh, fd;
     let px, py, pz, pw, ph, pd;
 
     if (axis === 'x') {
-        fz = u0; fy = v0;
-        fd = u1 - u0; fh = v1 - v0;
-        fw = t;
+        fz = u0; fy = v0; fd = uSize; fh = vSize; fw = t;
         fx = side === 'max' ? position : position - t;
-
-        pz = u0; py = v0; pd = fd; ph = fh; pw = t;
+        pz = u0; py = v0; pd = uSize; ph = vSize; pw = t;
         px = side === 'max' ? position + t : position - 2 * t;
-    } else { // z
-        fx = u0; fy = v0;
-        fw = u1 - u0; fh = v1 - v0;
-        fd = t;
+    } else if (axis === 'y') {
+        fx = u0; fz = v0; fw = uSize; fd = vSize; fh = t;
+        fy = side === 'max' ? position : position - t;
+        px = u0; pz = v0; pw = uSize; pd = vSize; ph = t;
+        py = side === 'max' ? position + t : position - 2 * t;
+    } else {
+        fx = u0; fy = v0; fw = uSize; fh = vSize; fd = t;
         fz = side === 'max' ? position : position - t;
-
-        px = u0; py = v0; pw = fw; ph = fh; pd = t;
+        px = u0; py = v0; pw = uSize; ph = vSize; pd = t;
         pz = side === 'max' ? position + t : position - 2 * t;
     }
 
-    const doorframe = new BrushDef('subtract', fx, fy, fz, fw, fh, fd);
-    doorframe.isDoorframe = true;
-    brushes.push(doorframe);
+    const frame = new BrushDef('subtract', fx, fy, fz, fw, fh, fd);
+    if (holeDoor) {
+        frame.isDoorframe = true;
+    } else {
+        frame.isHoleFrame = true;
+    }
+    brushes.push(frame);
 
     const protoroom = new BrushDef('subtract', px, py, pz, pw, ph, pd);
     brushes.push(protoroom);
 
-    // Exit door mode, select protoroom far face for immediate push
-    doorMode = false;
+    // Exit hole mode, select protoroom far face for immediate push
+    holeMode = false;
     const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
     selectedFace = {
         brushId: protoroom.id, axis, side,
@@ -1575,8 +1614,16 @@ document.addEventListener('keydown', e => {
         case 'KeyE':
             extrudeSelectedFace(); break;
         case 'KeyT':
-            doorMode = !doorMode;
-            if (doorMode) { activeBrush = null; activeOp = null; activeSide = null; }
+            if (e.shiftKey) {
+                // Shift+T = door mode (floor-anchored, walls only)
+                holeDoor = true;
+                holeMode = !holeMode;
+            } else {
+                // T = generic hole mode (any face, free position)
+                holeDoor = false;
+                holeMode = !holeMode;
+            }
+            if (holeMode) { activeBrush = null; activeOp = null; activeSide = null; }
             updateHUD();
             break;
         case 'BracketLeft':
@@ -1610,8 +1657,8 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('mousedown', e => {
     if (!isLocked || e.button !== 0) return;
-    if (doorMode) {
-        confirmDoorPlacement();
+    if (holeMode) {
+        confirmHolePlacement();
     } else {
         selectFaceAtCrosshair();
     }
@@ -1620,8 +1667,10 @@ document.addEventListener('mousedown', e => {
 // ─── HUD ─────────────────────────────────────────────────────────────
 
 function updateHUD() {
-    let selText = doorMode ? '[DOOR MODE] Look at wall, click to place — T to cancel' : 'None — click a face to select';
-    if (!doorMode && selectedFace) {
+    let selText = holeMode
+        ? (holeDoor ? '[DOOR MODE] Look at wall, click to place — T to cancel' : '[HOLE MODE] Look at any face, click to place — T to cancel')
+        : 'None — click a face to select';
+    if (!holeMode && selectedFace) {
         const axisLabel = { x: 'X', y: 'Y', z: 'Z' }[selectedFace.axis];
         const sideLabel = selectedFace.side === 'max' ? '+' : '-';
         selText = `Face: ${axisLabel}${sideLabel}`;
@@ -1664,7 +1713,7 @@ function animate() {
 
     updateCamera(dt);
     updateSelectionPreview();
-    updateDoorPreview();
+    updateHolePreview();
     renderer.render(scene, camera);
 }
 
