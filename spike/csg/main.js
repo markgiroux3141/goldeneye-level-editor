@@ -7,6 +7,7 @@ const SCALE = 0.25;
 const MOVE_SPEED = 8;
 const LOOK_SPEED = 0.002;
 const WALL_THICKNESS = 1;
+const WALL_SPLIT_V = 4; // WT height where lower wall meets upper wall
 
 // ─── Brush Definition ────────────────────────────────────────────────
 
@@ -21,6 +22,8 @@ class BrushDef {
         // Per-face taper: key = 'x-min'|'x-max'|'y-min'|'y-max'|'z-min'|'z-max'
         // value = { u: number, v: number } — symmetric inset in WT on each edge
         this.taper = {};
+        this.isDoorframe = false;  // true for door frame brushes (fixed texture, room boundary)
+        this.schemeKey = 'facility_white_tile'; // texture scheme for this brush
     }
 
     hasTaper() { return Object.keys(this.taper).length > 0; }
@@ -176,6 +179,13 @@ let selU0 = 0, selU1 = 0, selV0 = 0, selV1 = 0; // computed each frame
 let activeBrush = null;   // the brush being grown by consecutive operations
 let activeOp = null;       // 'push' | 'pull' | 'extrude'
 let activeSide = null;     // original face side when operation started
+
+// Door tool state
+let doorMode = false;      // T toggles door placement mode
+const DOOR_WIDTH = 3;      // door width in WT
+const DOOR_HEIGHT = 7;     // door height in WT
+let doorPreviewU0 = 0, doorPreviewU1 = 0, doorPreviewV0 = 0, doorPreviewV1 = 0;
+let doorPreviewFace = null; // the face the door preview is on
 
 // ─── Shell Auto-Resize ───────────────────────────────────────────────
 
@@ -401,6 +411,154 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.3));
 const grid = new THREE.GridHelper(20, 80, 0x333355, 0x222244);
 scene.add(grid);
 
+// ─── Texture Loading & Material Array ────────────────────────────────
+
+let texturedMode = false;
+let textureSchemes = {};
+let textureMap = new Map();
+
+// Cached material arrays: schemeKey → [7 materials for zones 0-6]
+// Zones 5,6 are shared (fixed tunnel textures) across all schemes.
+const schemeMaterialCache = new Map();
+let fixedTunnelWallMat = null;  // zone 5 — always stair_gradient
+let fixedTunnelFloorMat = null; // zone 6 — always floor_doorframe
+
+// Zone indices: 0=floor, 1=ceiling, 2=lower wall, 3=upper wall, 5=tunnel wall, 6=tunnel floor
+async function loadTextures() {
+    const resp = await fetch('../../public/textureSchemes.json');
+    textureSchemes = await resp.json();
+
+    const names = new Set();
+    for (const scheme of Object.values(textureSchemes)) {
+        for (const zone of Object.values(scheme.zones)) {
+            if (zone.texture) names.add(zone.texture);
+        }
+    }
+
+    const loader = new THREE.TextureLoader();
+    const promises = [];
+    for (const name of names) {
+        promises.push(new Promise(resolve => {
+            loader.load(`../../public/textures/${name}.bmp`, tex => {
+                tex.wrapS = THREE.RepeatWrapping;
+                tex.wrapT = THREE.RepeatWrapping;
+                tex.magFilter = THREE.NearestFilter;
+                tex.minFilter = THREE.NearestMipMapLinearFilter;
+                textureMap.set(name, tex);
+                resolve();
+            }, undefined, () => resolve());
+        }));
+    }
+    await Promise.all(promises);
+
+    // Build fixed tunnel materials (never change with scheme)
+    fixedTunnelWallMat = makeZoneMaterial('stair_gradient', 1.0);
+    fixedTunnelFloorMat = makeZoneMaterial('floor_doorframe', 0.7);
+
+    // Pre-build material arrays for all schemes
+    for (const key of Object.keys(textureSchemes)) {
+        schemeMaterialCache.set(key, buildSchemeMaterials(key));
+    }
+}
+
+function makeZoneMaterial(textureName, repeat) {
+    const baseTex = textureMap.get(textureName);
+    if (!baseTex) return new THREE.MeshLambertMaterial({ color: 0xff00ff, side: THREE.FrontSide });
+    const t = baseTex.clone();
+    t.repeat.set(repeat, repeat);
+    t.needsUpdate = true;
+    return new THREE.MeshLambertMaterial({ map: t, side: THREE.FrontSide });
+}
+
+function buildSchemeMaterials(schemeName) {
+    const scheme = textureSchemes[schemeName];
+    if (!scheme) return null;
+
+    const mats = [];
+    for (let i = 0; i <= 6; i++) {
+        if (i === 5) { mats.push(fixedTunnelWallMat); continue; }
+        if (i === 6) { mats.push(fixedTunnelFloorMat); continue; }
+
+        const zone = scheme.zones[String(i)];
+        if (!zone || zone.texture === null) {
+            const color = zone ? parseInt((zone.color || '#8B7355').slice(1), 16) : 0x8B7355;
+            mats.push(new THREE.MeshLambertMaterial({ color, side: THREE.FrontSide }));
+        } else {
+            mats.push(makeZoneMaterial(zone.texture, zone.repeat));
+        }
+    }
+    return mats;
+}
+
+// Get material array for a scheme (cached)
+function getMaterialsForScheme(schemeName) {
+    if (!schemeMaterialCache.has(schemeName)) {
+        schemeMaterialCache.set(schemeName, buildSchemeMaterials(schemeName));
+    }
+    return schemeMaterialCache.get(schemeName);
+}
+
+// ─── Room Detection ─────────────────────────────────────────────────
+// Flood fill from a brush through touching subtractive brushes,
+// stopping at doorframe brushes. Returns set of brush IDs in the room.
+
+function brushesTouching(a, b) {
+    // Two brushes touch if they share a face (overlap on 2 axes, adjacent on 1)
+    const axes = ['x', 'y', 'z'];
+    const dims = ['w', 'h', 'd'];
+    let sharedFace = false;
+    for (let i = 0; i < 3; i++) {
+        const aMin = a[axes[i]], aMax = a[axes[i]] + a[dims[i]];
+        const bMin = b[axes[i]], bMax = b[axes[i]] + b[dims[i]];
+        if (aMax === bMin || bMax === aMin) {
+            // Adjacent on this axis — check overlap on other two
+            let overlap = true;
+            for (let j = 0; j < 3; j++) {
+                if (j === i) continue;
+                const a0 = a[axes[j]], a1 = a[axes[j]] + a[dims[j]];
+                const b0 = b[axes[j]], b1 = b[axes[j]] + b[dims[j]];
+                if (a1 <= b0 || b1 <= a0) { overlap = false; break; }
+            }
+            if (overlap) { sharedFace = true; break; }
+        }
+    }
+    return sharedFace;
+}
+
+function findRoomBrushes(startBrush) {
+    const room = new Set();
+    const queue = [startBrush];
+    room.add(startBrush.id);
+
+    while (queue.length > 0) {
+        const current = queue.pop();
+        for (const other of brushes) {
+            if (room.has(other.id)) continue;
+            if (other.op !== 'subtract') continue;
+            if (other.isDoorframe) continue; // doors are boundaries
+            if (brushesTouching(current, other)) {
+                room.add(other.id);
+                queue.push(other);
+            }
+        }
+    }
+    return room;
+}
+
+function retextureRoom(schemeName) {
+    if (!selectedFace || selectedFace.brushId === 0) return;
+    const startBrush = brushes.find(b => b.id === selectedFace.brushId);
+    if (!startBrush || startBrush.isDoorframe) return;
+
+    const roomIds = findRoomBrushes(startBrush);
+    for (const b of brushes) {
+        if (roomIds.has(b.id)) b.schemeKey = schemeName;
+    }
+    rebuildCSG();
+}
+
+loadTextures();
+
 // ─── FPS Camera ──────────────────────────────────────────────────────
 
 const keys = new Set();
@@ -462,21 +620,368 @@ const wireMaterial = new THREE.MeshBasicMaterial({
     color: 0x000000, wireframe: true, transparent: true, opacity: 0.12,
 });
 
+// ─── Post-CSG: Assign UVs and material zones to CSG output ──────────
+// CSG output is a triangle soup with no UVs or zones. We classify each
+// triangle by normal direction to determine its zone, then compute UVs
+// from world-space positions projected onto the face's tangent plane.
+
+function assignUVsAndZones(geometry, faceIds) {
+    const pos = geometry.getAttribute('position');
+    const idx = geometry.index;
+    const triCount = idx ? idx.count / 3 : pos.count / 3;
+
+    // We need per-vertex UVs. CSG may share vertices between triangles,
+    // so we un-index the geometry to allow per-triangle UV assignment.
+    const newPos = [];
+    const newNormals = [];
+    const newUVs = [];
+    const newFaceIds = [];
+    const triZones = [];
+
+    const splitY = WALL_SPLIT_V * SCALE; // absolute world-space split height
+
+    // Helper: compute UV from world position for a given face axis
+    function vertexUV(v, axis, rotated = false) {
+        const wx = v.x / SCALE, wy = v.y / SCALE, wz = v.z / SCALE;
+        if (rotated) {
+            if (axis === 'x') return [wy, wz];
+            if (axis === 'z') return [wy, wx];
+            return [wz, wx];
+        }
+        if (axis === 'x') return [wz, wy];
+        if (axis === 'y') return [wx, wz];
+        return [wx, wy];
+    }
+
+    // Per-triangle data: zone + schemeKey (for multi-scheme material lookup)
+    const triSchemes = [];
+
+    // Helper: emit a triangle with a given zone, axis, normal, faceId, and scheme.
+    // Checks winding matches the intended normal — swaps B/C if flipped.
+    const _e1 = new THREE.Vector3(), _e2 = new THREE.Vector3(), _cross = new THREE.Vector3();
+    function emitTri(pA, pB, pC, nx, ny, nz, axis, zone, faceId, schemeKey, rotated = false) {
+        _e1.subVectors(pB, pA);
+        _e2.subVectors(pC, pA);
+        _cross.crossVectors(_e1, _e2);
+        const dot = _cross.x * nx + _cross.y * ny + _cross.z * nz;
+        const [vB, vC] = dot < 0 ? [pC, pB] : [pB, pC];
+
+        triZones.push(zone);
+        triSchemes.push(schemeKey);
+        newFaceIds.push(faceId);
+        for (const v of [pA, vB, vC]) {
+            newPos.push(v.x, v.y, v.z);
+            newNormals.push(nx, ny, nz);
+            const [u, uv_v] = vertexUV(v, axis, rotated);
+            newUVs.push(u, uv_v);
+        }
+    }
+
+    // Helper: interpolate between two Vector3s at a given y
+    function lerpAtY(a, b, y) {
+        const t = (y - a.y) / (b.y - a.y);
+        return new THREE.Vector3(
+            a.x + (b.x - a.x) * t,
+            y,
+            a.z + (b.z - a.z) * t
+        );
+    }
+
+    // Helper: interpolate between two Vector3s at a given axis value (x, y, or z)
+    function lerpAtAxis(a, b, splitAxis, val) {
+        const av = splitAxis === 'x' ? a.x : splitAxis === 'y' ? a.y : a.z;
+        const bv = splitAxis === 'x' ? b.x : splitAxis === 'y' ? b.y : b.z;
+        const t = (val - av) / (bv - av);
+        return new THREE.Vector3(
+            a.x + (b.x - a.x) * t,
+            a.y + (b.y - a.y) * t,
+            a.z + (b.z - a.z) * t
+        );
+    }
+
+    // Helper: split an array of triangles along an axis=value plane.
+    // Each triangle is {a, b, c} of Vector3. Returns expanded array.
+    function splitTrisAtAxis(tris, splitAxis, val) {
+        const result = [];
+        const getVal = splitAxis === 'x' ? v => v.x : splitAxis === 'y' ? v => v.y : v => v.z;
+        for (const tri of tris) {
+            const verts = [tri.a, tri.b, tri.c];
+            const vals = verts.map(getVal);
+            const minV = Math.min(...vals), maxV = Math.max(...vals);
+            if (maxV <= val + 1e-6 || minV >= val - 1e-6) {
+                // Fully on one side
+                result.push(tri);
+                continue;
+            }
+            // Sort by axis value
+            const sorted = verts.slice().sort((a, b) => getVal(a) - getVal(b));
+            const [lo, mid, hi] = sorted;
+            const pLoHi = lerpAtAxis(lo, hi, splitAxis, val);
+            if (getVal(mid) <= val) {
+                const pMidHi = lerpAtAxis(mid, hi, splitAxis, val);
+                result.push({ a: lo, b: mid, c: pLoHi });
+                result.push({ a: mid, b: pMidHi, c: pLoHi });
+                result.push({ a: pLoHi, b: pMidHi, c: hi });
+            } else {
+                const pLoMid = lerpAtAxis(lo, mid, splitAxis, val);
+                result.push({ a: lo, b: pLoMid, c: pLoHi });
+                result.push({ a: pLoMid, b: mid, c: pLoHi });
+                result.push({ a: mid, b: hi, c: pLoHi });
+            }
+        }
+        return result;
+    }
+
+    // Collect doorframe 3D AABBs in world-space for boundary splitting
+    const doorAABBs = brushes
+        .filter(b => b.isDoorframe)
+        .map(b => ({
+            minX: b.minX * SCALE, maxX: b.maxX * SCALE,
+            minY: b.minY * SCALE, maxY: b.maxY * SCALE,
+            minZ: b.minZ * SCALE, maxZ: b.maxZ * SCALE,
+            brush: b
+        }));
+
+    const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+    const edge1 = new THREE.Vector3(), edge2 = new THREE.Vector3();
+    const normal = new THREE.Vector3();
+
+    for (let t = 0; t < triCount; t++) {
+        const i0 = idx ? idx.getX(t * 3) : t * 3;
+        const i1 = idx ? idx.getX(t * 3 + 1) : t * 3 + 1;
+        const i2 = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
+
+        vA.fromBufferAttribute(pos, i0);
+        vB.fromBufferAttribute(pos, i1);
+        vC.fromBufferAttribute(pos, i2);
+
+        edge1.subVectors(vB, vA);
+        edge2.subVectors(vC, vA);
+        normal.crossVectors(edge1, edge2).normalize();
+
+        const ax = Math.abs(normal.x), ay = Math.abs(normal.y), az = Math.abs(normal.z);
+        const faceId = faceIds[t] || { brushId: 0, axis: 'x', side: 'min', position: 0 };
+        const nx = normal.x, ny = normal.y, nz = normal.z;
+
+        const ownerBrush = (faceId.brushId !== 0) ? brushes.find(b => b.id === faceId.brushId) : null;
+        const scheme = ownerBrush ? ownerBrush.schemeKey : 'facility_white_tile';
+
+        if (ay >= ax && ay >= az) {
+            // Floor or ceiling
+            const axis = 'y';
+            if (normal.y > 0) {
+                // Floor — split along doorframe XZ boundaries, classify inside/outside
+                let floorTris = [{ a: vA.clone(), b: vB.clone(), c: vC.clone() }];
+                for (const db of doorAABBs) {
+                    floorTris = splitTrisAtAxis(floorTris, 'x', db.minX);
+                    floorTris = splitTrisAtAxis(floorTris, 'x', db.maxX);
+                    floorTris = splitTrisAtAxis(floorTris, 'z', db.minZ);
+                    floorTris = splitTrisAtAxis(floorTris, 'z', db.maxZ);
+                }
+                for (const tri of floorTris) {
+                    const cx = (tri.a.x + tri.b.x + tri.c.x) / 3;
+                    const cz = (tri.a.z + tri.b.z + tri.c.z) / 3;
+                    let dfBrush = null;
+                    for (const db of doorAABBs) {
+                        if (cx >= db.minX && cx <= db.maxX && cz >= db.minZ && cz <= db.maxZ) {
+                            dfBrush = db.brush; break;
+                        }
+                    }
+                    if (dfBrush) {
+                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 6, faceId, scheme, dfBrush.w === WALL_THICKNESS);
+                    } else {
+                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 0, faceId, scheme);
+                    }
+                }
+            } else {
+                // Ceiling — split along doorframe XZ boundaries, classify lintel vs room ceiling
+                let ceilTris = [{ a: vA.clone(), b: vB.clone(), c: vC.clone() }];
+                for (const db of doorAABBs) {
+                    ceilTris = splitTrisAtAxis(ceilTris, 'x', db.minX);
+                    ceilTris = splitTrisAtAxis(ceilTris, 'x', db.maxX);
+                    ceilTris = splitTrisAtAxis(ceilTris, 'z', db.minZ);
+                    ceilTris = splitTrisAtAxis(ceilTris, 'z', db.maxZ);
+                }
+                for (const tri of ceilTris) {
+                    const cx = (tri.a.x + tri.b.x + tri.c.x) / 3;
+                    const cy = (tri.a.y + tri.b.y + tri.c.y) / 3;
+                    const cz = (tri.a.z + tri.b.z + tri.c.z) / 3;
+                    let dfBrush = null;
+                    for (const db of doorAABBs) {
+                        if (cx >= db.minX && cx <= db.maxX && cy >= db.minY && cy <= db.maxY && cz >= db.minZ && cz <= db.maxZ) {
+                            dfBrush = db.brush; break;
+                        }
+                    }
+                    if (dfBrush) {
+                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 5, faceId, scheme, dfBrush.w === WALL_THICKNESS);
+                    } else {
+                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 1, faceId, scheme);
+                    }
+                }
+            }
+        } else {
+            // Wall — split along doorframe boundaries on tangent axes, classify inside/outside
+            const axis = ax >= az ? 'x' : 'z';
+
+            let wallTris = [{ a: vA.clone(), b: vB.clone(), c: vC.clone() }];
+            for (const db of doorAABBs) {
+                if (axis === 'x') {
+                    wallTris = splitTrisAtAxis(wallTris, 'z', db.minZ);
+                    wallTris = splitTrisAtAxis(wallTris, 'z', db.maxZ);
+                } else {
+                    wallTris = splitTrisAtAxis(wallTris, 'x', db.minX);
+                    wallTris = splitTrisAtAxis(wallTris, 'x', db.maxX);
+                }
+                wallTris = splitTrisAtAxis(wallTris, 'y', db.minY);
+                wallTris = splitTrisAtAxis(wallTris, 'y', db.maxY);
+            }
+            for (const tri of wallTris) {
+                const cx = (tri.a.x + tri.b.x + tri.c.x) / 3;
+                const cy = (tri.a.y + tri.b.y + tri.c.y) / 3;
+                const cz = (tri.a.z + tri.b.z + tri.c.z) / 3;
+                let dfBrush = null;
+                for (const db of doorAABBs) {
+                    if (cx >= db.minX && cx <= db.maxX && cy >= db.minY && cy <= db.maxY && cz >= db.minZ && cz <= db.maxZ) {
+                        dfBrush = db.brush; break;
+                    }
+                }
+                if (dfBrush) {
+                    // Doorframe wall — zone 5, rotated UVs
+                    emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 5, faceId, scheme, true);
+                } else {
+                    // Room wall — split at WALL_SPLIT_V for zone 2/3
+                    const minY = Math.min(tri.a.y, tri.b.y, tri.c.y);
+                    const maxY = Math.max(tri.a.y, tri.b.y, tri.c.y);
+
+                    if (maxY <= splitY) {
+                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 2, faceId, scheme);
+                    } else if (minY >= splitY) {
+                        emitTri(tri.a, tri.b, tri.c, nx, ny, nz, axis, 3, faceId, scheme);
+                    } else {
+                        // Triangle crosses the split — clip into sub-triangles
+                        const verts = [tri.a, tri.b, tri.c];
+                        verts.sort((a, b) => a.y - b.y);
+                        const [lo, mid, hi] = verts;
+                        const pLoHi = lerpAtY(lo, hi, splitY);
+
+                        if (mid.y <= splitY) {
+                            const pMidHi = lerpAtY(mid, hi, splitY);
+                            emitTri(lo, mid, pLoHi, nx, ny, nz, axis, 2, faceId, scheme);
+                            emitTri(mid, pMidHi, pLoHi, nx, ny, nz, axis, 2, faceId, scheme);
+                            emitTri(pLoHi, pMidHi, hi, nx, ny, nz, axis, 3, faceId, scheme);
+                        } else {
+                            const pLoMid = lerpAtY(lo, mid, splitY);
+                            emitTri(lo, pLoMid, pLoHi, nx, ny, nz, axis, 2, faceId, scheme);
+                            emitTri(pLoMid, mid, pLoHi, nx, ny, nz, axis, 3, faceId, scheme);
+                            emitTri(mid, hi, pLoHi, nx, ny, nz, axis, 3, faceId, scheme);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Build new un-indexed geometry
+    const newGeo = new THREE.BufferGeometry();
+    newGeo.setAttribute('position', new THREE.Float32BufferAttribute(newPos, 3));
+    newGeo.setAttribute('normal', new THREE.Float32BufferAttribute(newNormals, 3));
+    newGeo.setAttribute('uv', new THREE.Float32BufferAttribute(newUVs, 2));
+
+    // Build combined material array for all schemes in use.
+    // Layout: for each scheme, zones 0-3 get unique materials.
+    //         Zones 5,6 are shared (fixed tunnel textures) across all schemes.
+    // Material index = schemeIndex * 7 + zone
+    const uniqueSchemes = [...new Set(triSchemes)].sort();
+    const schemeIndexMap = {};
+    const combinedMaterials = [];
+
+    for (let si = 0; si < uniqueSchemes.length; si++) {
+        schemeIndexMap[uniqueSchemes[si]] = si;
+        const mats = getMaterialsForScheme(uniqueSchemes[si]);
+        if (mats) {
+            for (let z = 0; z <= 6; z++) combinedMaterials.push(mats[z]);
+        } else {
+            // Fallback: 7 magenta materials
+            for (let z = 0; z <= 6; z++) {
+                combinedMaterials.push(new THREE.MeshLambertMaterial({ color: 0xff00ff, side: THREE.FrontSide }));
+            }
+        }
+    }
+
+    // Compute material index per triangle
+    const triMatIndices = triZones.map((zone, i) => {
+        const si = schemeIndexMap[triSchemes[i]] || 0;
+        return si * 7 + zone;
+    });
+
+    // Sort triangles by material index and emit groups
+    const triOrder = triMatIndices.map((matIdx, i) => ({ matIdx, idx: i }));
+    triOrder.sort((a, b) => a.matIdx - b.matIdx);
+
+    const sortedIndices = [];
+    const sortedFaceIds = [];
+    for (const { idx: ti } of triOrder) {
+        const base = ti * 3;
+        sortedIndices.push(base, base + 1, base + 2);
+        sortedFaceIds.push(newFaceIds[ti]);
+    }
+    newGeo.setIndex(sortedIndices);
+
+    // Emit groups
+    let groupStart = 0, currentMatIdx = triOrder[0]?.matIdx, groupCount = 0;
+    for (const { matIdx } of triOrder) {
+        if (matIdx !== currentMatIdx) {
+            newGeo.addGroup(groupStart, groupCount, currentMatIdx);
+            groupStart += groupCount;
+            groupCount = 0;
+            currentMatIdx = matIdx;
+        }
+        groupCount += 3;
+    }
+    if (groupCount > 0) newGeo.addGroup(groupStart, groupCount, currentMatIdx);
+
+    return { geometry: newGeo, faceIds: sortedFaceIds, materials: combinedMaterials };
+}
+
 function rebuildCSG() {
     if (csgMesh) { scene.remove(csgMesh); csgMesh.geometry.dispose(); }
     if (wireMesh) { scene.remove(wireMesh); wireMesh.geometry.dispose(); }
 
-    const { geometry, timeMs, faceIds } = evaluateBrushes();
-    currentFaceIds = faceIds;
+    const { geometry: rawGeo, timeMs, faceIds: rawFaceIds } = evaluateBrushes();
 
-    csgMesh = new THREE.Mesh(geometry, mainMaterial);
+    let finalGeo, finalFaceIds, material;
+
+    if (texturedMode && fixedTunnelWallMat) {
+        const result = assignUVsAndZones(rawGeo, rawFaceIds);
+        finalGeo = result.geometry;
+        finalFaceIds = result.faceIds;
+        material = result.materials;
+        rawGeo.dispose();
+    } else {
+        finalGeo = rawGeo;
+        finalFaceIds = rawFaceIds;
+        material = mainMaterial;
+    }
+
+    currentFaceIds = finalFaceIds;
+
+    csgMesh = new THREE.Mesh(finalGeo, material);
     scene.add(csgMesh);
-    wireMesh = new THREE.Mesh(geometry, wireMaterial);
+
+    if (texturedMode) {
+        // In textured mode, use edge lines instead of wireframe mesh
+        const edgesGeo = new THREE.EdgesGeometry(finalGeo, 30);
+        const edgesMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.15 });
+        wireMesh = new THREE.LineSegments(edgesGeo, edgesMat);
+    } else {
+        wireMesh = new THREE.Mesh(finalGeo, wireMaterial);
+    }
     scene.add(wireMesh);
 
+    const mode = texturedMode ? ' [textured]' : '';
     const bakeInfo = totalBakedBrushes > 0 ? ` | baked: ${totalBakedBrushes}` : '';
     document.getElementById('timing').textContent =
-        `CSG: ${timeMs.toFixed(1)}ms | ${faceIds.length} tris | ${brushes.length} brushes${bakeInfo}`;
+        `CSG: ${timeMs.toFixed(1)}ms | ${finalFaceIds.length} tris | ${brushes.length} brushes${bakeInfo}${mode}`;
 }
 
 // ─── Selection Preview (rendered every frame) ────────────────────────
@@ -780,6 +1285,145 @@ function scaleSelectedFace(deltaU, deltaV) {
     updateHUD();
 }
 
+// ─── Door Tool ──────────────────────────────────────────────────────
+// T toggles door mode. In door mode, a yellow outline follows the crosshair
+// showing where a 3×7 door will be placed. Click to place.
+// A door is two subtractive brushes:
+//   1. Doorframe: cuts through the wall (WALL_THICKNESS deep)
+//   2. Protoroom: same footprint on the far side, user can push to expand
+
+let doorPreviewMesh = null;
+const doorPreviewMat = new THREE.MeshBasicMaterial({
+    color: 0xffcc00, transparent: true, opacity: 0.4,
+    side: THREE.DoubleSide, depthTest: true,
+    polygonOffset: true, polygonOffsetFactor: -2,
+});
+
+function updateDoorPreview() {
+    if (doorPreviewMesh) { scene.remove(doorPreviewMesh); doorPreviewMesh.geometry.dispose(); doorPreviewMesh = null; }
+    if (!doorMode || !csgMesh || !isLocked) return;
+
+    // Raycast to find which face we're looking at
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const hits = raycaster.intersectObject(csgMesh);
+    if (hits.length === 0) { doorPreviewFace = null; return; }
+
+    const hitFaceId = currentFaceIds[hits[0].faceIndex];
+    if (!hitFaceId) { doorPreviewFace = null; return; }
+
+    // Only allow doors on walls (not floor/ceiling)
+    if (hitFaceId.axis === 'y') { doorPreviewFace = null; return; }
+
+    // Get face info for bounds checking
+    const brush = brushes.find(b => b.id === hitFaceId.brushId)
+        || (shell.id === hitFaceId.brushId ? shell : null);
+    if (!brush) { doorPreviewFace = null; return; }
+
+    const info = getFaceUVInfo(brush, hitFaceId.axis);
+    if (!info || info.uSize < DOOR_WIDTH || info.vSize < DOOR_HEIGHT) { doorPreviewFace = null; return; }
+
+    // Compute door placement — centered on crosshair U, floor-anchored on V
+    const uv = worldToFaceUV(hits[0].point, hitFaceId.axis);
+
+    let u0 = Math.round(uv.u - DOOR_WIDTH / 2);
+    u0 = Math.max(info.uMin, Math.min(u0, info.uMax - DOOR_WIDTH));
+    const u1 = u0 + DOOR_WIDTH;
+
+    // Floor-anchored: door starts at the bottom of the face
+    const v0 = info.vMin;
+    const v1 = v0 + DOOR_HEIGHT;
+
+    doorPreviewU0 = u0; doorPreviewU1 = u1;
+    doorPreviewV0 = v0; doorPreviewV1 = v1;
+    doorPreviewFace = hitFaceId;
+
+    // Render yellow outline
+    renderDoorPreviewQuad(hitFaceId, u0, u1, v0, v1);
+}
+
+function renderDoorPreviewQuad(face, u0, u1, v0, v1) {
+    const { axis, side, position } = face;
+    const pos = position * SCALE;
+    const offset = side === 'min' ? 0.003 : -0.003;
+
+    let x0, x1, y0, y1, z0, z1;
+    if (axis === 'x') {
+        x0 = x1 = pos + offset;
+        z0 = u0 * SCALE; z1 = u1 * SCALE;
+        y0 = v0 * SCALE; y1 = v1 * SCALE;
+    } else {
+        z0 = z1 = pos + offset;
+        x0 = u0 * SCALE; x1 = u1 * SCALE;
+        y0 = v0 * SCALE; y1 = v1 * SCALE;
+    }
+
+    const positions = new Float32Array(axis === 'x' ? [
+        x0, y0, z0,  x0, y1, z0,  x0, y1, z1,
+        x0, y0, z0,  x0, y1, z1,  x0, y0, z1,
+    ] : [
+        x0, y0, z0,  x0, y1, z0,  x1, y1, z0,
+        x0, y0, z0,  x1, y1, z0,  x1, y0, z0,
+    ]);
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.computeVertexNormals();
+    doorPreviewMesh = new THREE.Mesh(geo, doorPreviewMat);
+    scene.add(doorPreviewMesh);
+}
+
+function confirmDoorPlacement() {
+    if (!doorPreviewFace) return;
+
+    const { axis, side, position } = doorPreviewFace;
+    const t = WALL_THICKNESS;
+    const u0 = doorPreviewU0, u1 = doorPreviewU1;
+    const v0 = doorPreviewV0, v1 = doorPreviewV1;
+
+    let fx, fy, fz, fw, fh, fd;
+    let px, py, pz, pw, ph, pd;
+
+    if (axis === 'x') {
+        fz = u0; fy = v0;
+        fd = u1 - u0; fh = v1 - v0;
+        fw = t;
+        fx = side === 'max' ? position : position - t;
+
+        pz = u0; py = v0; pd = fd; ph = fh; pw = t;
+        px = side === 'max' ? position + t : position - 2 * t;
+    } else { // z
+        fx = u0; fy = v0;
+        fw = u1 - u0; fh = v1 - v0;
+        fd = t;
+        fz = side === 'max' ? position : position - t;
+
+        px = u0; py = v0; pw = fw; ph = fh; pd = t;
+        pz = side === 'max' ? position + t : position - 2 * t;
+    }
+
+    const doorframe = new BrushDef('subtract', fx, fy, fz, fw, fh, fd);
+    doorframe.isDoorframe = true;
+    brushes.push(doorframe);
+
+    const protoroom = new BrushDef('subtract', px, py, pz, pw, ph, pd);
+    brushes.push(protoroom);
+
+    // Exit door mode, select protoroom far face for immediate push
+    doorMode = false;
+    const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
+    selectedFace = {
+        brushId: protoroom.id, axis, side,
+        position: side === 'max' ? protoroom[axis] + protoroom[dimKey] : protoroom[axis]
+    };
+    selSizeU = 0; selSizeV = 0;
+    activeBrush = null; activeOp = null; activeSide = null;
+
+    updateShell();
+    rebuildCSG();
+    updateHUD();
+}
+
 // ─── Brush Helpers ──────────────────────────────────────────────────
 
 function ensureSelectionBounds() {
@@ -930,6 +1574,11 @@ document.addEventListener('keydown', e => {
             bake(); break;
         case 'KeyE':
             extrudeSelectedFace(); break;
+        case 'KeyT':
+            doorMode = !doorMode;
+            if (doorMode) { activeBrush = null; activeOp = null; activeSide = null; }
+            updateHUD();
+            break;
         case 'BracketLeft':
             // Scale face smaller: [ = uniform, shift+[ = U only, ctrl+[ = V only
             if (e.shiftKey) scaleSelectedFace(1, 0);
@@ -942,19 +1591,37 @@ document.addEventListener('keydown', e => {
             else if (e.ctrlKey) { e.preventDefault(); scaleSelectedFace(0, -1); }
             else scaleSelectedFace(-1, -1);
             break;
+        case 'KeyV':
+            texturedMode = !texturedMode;
+            rebuildCSG();
+            updateHUD();
+            break;
+        case 'Digit1': case 'Digit2': case 'Digit3':
+            if (texturedMode && selectedFace) {
+                const schemeNames = Object.keys(textureSchemes);
+                const idx = parseInt(e.code.slice(-1)) - 1;
+                if (idx < schemeNames.length) {
+                    retextureRoom(schemeNames[idx]);
+                }
+            }
+            break;
     }
 });
 
 document.addEventListener('mousedown', e => {
     if (!isLocked || e.button !== 0) return;
-    selectFaceAtCrosshair();
+    if (doorMode) {
+        confirmDoorPlacement();
+    } else {
+        selectFaceAtCrosshair();
+    }
 });
 
 // ─── HUD ─────────────────────────────────────────────────────────────
 
 function updateHUD() {
-    let selText = 'None — click a face to select';
-    if (selectedFace) {
+    let selText = doorMode ? '[DOOR MODE] Look at wall, click to place — T to cancel' : 'None — click a face to select';
+    if (!doorMode && selectedFace) {
         const axisLabel = { x: 'X', y: 'Y', z: 'Z' }[selectedFace.axis];
         const sideLabel = selectedFace.side === 'max' ? '+' : '-';
         selText = `Face: ${axisLabel}${sideLabel}`;
@@ -997,6 +1664,7 @@ function animate() {
 
     updateCamera(dt);
     updateSelectionPreview();
+    updateDoorPreview();
     renderer.render(scene, camera);
 }
 
