@@ -104,6 +104,19 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             csgActions.pullSelectedFace();
             return;
         }
+        // Arrow keys: push wall + carve stairs
+        if (hotkeyManager.matches('stair_down', e)) {
+            e.preventDefault();
+            saveUndoState();
+            csgActions.pushSelectedFaceAsStairs('down');
+            return;
+        }
+        if (hotkeyManager.matches('stair_up', e)) {
+            e.preventDefault();
+            saveUndoState();
+            csgActions.pushSelectedFaceAsStairs('up');
+            return;
+        }
         // E = extrude selected face
         if (e.code === 'KeyE') {
             e.preventDefault();
@@ -174,6 +187,7 @@ export function handleIndoorKey(e, { gizmo, camera }) {
                 state.csg.activeBrush = null;
                 state.csg.activeOp = null;
                 state.csg.activeSide = null;
+                state.csg.activeStairOp = null;
             }
             return;
         }

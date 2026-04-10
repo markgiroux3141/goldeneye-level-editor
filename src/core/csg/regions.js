@@ -88,8 +88,10 @@ export function clusterBrushes(brushes) {
 }
 
 // Flood fill from a brush through touching subtractive brushes within the same
-// room, stopping at doorframe/holeframe brushes. Returns a Set of brush IDs.
-// Used by retextureRoom to apply a scheme consistently across a connected room.
+// room, stopping at doorframe/holeframe/stair-step brushes. Returns a Set of
+// brush IDs. Used by retextureRoom to apply a scheme consistently across a
+// connected room section. Stair steps act as section boundaries so each
+// corridor segment retains its own wall-trim height.
 // (Spike line 533.)
 export function findRoomBrushes(startBrush, brushes) {
     const room = new Set();
@@ -102,6 +104,7 @@ export function findRoomBrushes(startBrush, brushes) {
             if (room.has(other.id)) continue;
             if (other.op !== 'subtract') continue;
             if (other.isDoorframe || other.isHoleFrame) continue;
+            if (other.isStairStep) continue;
             if (brushesTouching(current, other)) {
                 room.add(other.id);
                 queue.push(other);

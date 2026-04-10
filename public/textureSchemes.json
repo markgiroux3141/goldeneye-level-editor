@@ -20,8 +20,8 @@
         "zones": {
             "0": { "texture": "grey_tile_floor", "repeat": 0.35 },
             "1": { "texture": "foam_ceiling", "repeat": 0.25 },
-            "2": { "texture": "blue_brick_wall", "repeat": 0.25 },
-            "3": { "texture": "blue_brick_wall", "repeat": 0.25 },
+            "2": { "texture": "blue_brick_wall", "repeat": 0.45 },
+            "3": { "texture": "blue_brick_wall", "repeat": 0.45 },
             "4": { "texture": null, "color": "#8B7355" },
             "5": { "texture": "stair_gradient", "repeat": 1.0 },
             "6": { "texture": "floor_doorframe", "repeat": 0.35 },
@@ -41,6 +41,18 @@
             "5": { "texture": "stair_gradient", "repeat": 1.0 },
             "6": { "texture": "floor_doorframe", "repeat": 0.35 },
             "7": { "texture": "white_brace", "repeat": 0.25 }
+        }
+    },
+    "simple_blue": {
+        "label": "Simple Blue",
+        "group": "Simple",
+        "zones": {
+            "0": { "texture": "floor_doorframe", "repeat": 1.0 },
+            "1": { "texture": "floor_doorframe", "repeat": 1.0 },
+            "2": { "texture": "blue_stairs", "repeat": 1.0 },
+            "3": { "texture": "blue_stairs", "repeat": 1.0 },
+            "4": { "texture": null, "color": "#8B7355" },
+            "5": { "texture": "blue_stairs", "repeat": 1.0 }
         }
     }
 }

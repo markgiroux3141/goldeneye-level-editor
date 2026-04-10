@@ -1,6 +1,7 @@
 // Menu tree definition — data-driven structure for the radial menu
 
 import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
+import { PLATFORM_STYLES } from '../geometry/platformStyles.js';
 import { hotkeyManager } from '../input/HotkeyManager.js';
 
 export function buildMenuTree() {
@@ -15,6 +16,13 @@ export function buildMenuTree() {
                 { label: 'Simple Stairs', action: 'tool:simple_stairs', hotkey: hotkeyManager.getDisplayKey('tool_simple_stairs'), hotkeyAction: 'tool_simple_stairs' },
                 { label: 'Light',         action: 'tool:light',         hotkey: hotkeyManager.getDisplayKey('tool_light'),         hotkeyAction: 'tool_light' },
             ],
+        },
+        {
+            label: 'Platform Style',
+            children: Object.entries(PLATFORM_STYLES).map(([name, def]) => ({
+                label: def.label,
+                action: `platform_style:${name}`,
+            })),
         },
         {
             label: 'Textures',
@@ -47,9 +55,12 @@ export function buildMenuTree() {
 }
 
 function buildTextureSubmenu() {
-    // Group schemes by their "group" field (or derive from name prefix)
+    // Group schemes by their "group" field (or derive from name prefix).
+    // Schemes without a `key` are internal (e.g. used by platform styles)
+    // and don't appear in the CSG room-texture menu.
     const groups = {};
     for (const [name, scheme] of Object.entries(TEXTURE_SCHEMES)) {
+        if (!scheme.key) continue;
         const group = scheme.group || name.split('_')[0];
         const groupLabel = group.charAt(0).toUpperCase() + group.slice(1);
         if (!groups[groupLabel]) groups[groupLabel] = [];

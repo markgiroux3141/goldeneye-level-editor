@@ -7,6 +7,7 @@ import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
 import { gridHelper } from '../scene/setup.js';
 import { setTool } from '../tools/ToolManager.js';
 import { setHoleMode } from '../csg/csgActions.js';
+import { PLATFORM_STYLES } from '../geometry/platformStyles.js';
 
 // Callbacks set during init to avoid circular imports with main.js
 let callbacks = {};
@@ -23,8 +24,17 @@ export function initMenuActions(cbs) {
             handleViewAction(actionId.slice(5));
         } else if (actionId.startsWith('lighting:')) {
             handleLightingAction(actionId.slice(9));
+        } else if (actionId.startsWith('platform_style:')) {
+            handlePlatformStyleAction(actionId.slice(15));
         }
     });
+}
+
+function handlePlatformStyleAction(styleName) {
+    const style = PLATFORM_STYLES[styleName];
+    if (!style) return;
+    state.platformStyle = styleName;
+    callbacks.showMessage('Platform style: ' + style.label);
 }
 
 function handleToolAction(toolName) {

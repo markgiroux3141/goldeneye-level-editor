@@ -9,7 +9,7 @@ const S = WORLD_SCALE;
 // ============================================================
 // GEOMETRY BUILDER
 // ============================================================
-class PlatformGeometryBuilder {
+export class PlatformGeometryBuilder {
     constructor() {
         this.positions = [];
         this.normals = [];
@@ -111,7 +111,7 @@ class PlatformGeometryBuilder {
 //   0 = grey_tile_floor (top surface / tread)
 //   3 = brown_wall (sides, bottom)
 
-export function buildPlatformGeometry(platform, options = {}) {
+export function buildBoxPlatformGeometry(platform, options = {}) {
     const builder = new PlatformGeometryBuilder();
 
     const { x, y, z, sizeX, sizeZ, thickness, grounded } = platform;
@@ -197,7 +197,7 @@ export function buildPlatformGeometry(platform, options = {}) {
 // STAIR RUN GEOMETRY (connecting two platforms or ground)
 // ============================================================
 
-function toWorld(runAxis, runPos, y, perpPos) {
+export function toWorld(runAxis, runPos, y, perpPos) {
     if (runAxis === 'x') return [runPos, y, perpPos];
     return [perpPos, y, runPos];
 }
@@ -209,7 +209,7 @@ function toWorld(runAxis, runPos, y, perpPos) {
  * @param {Platform|null} toPlatform - destination platform (null = ground)
  * @param {object} options - { viewMode: 'grid'|'textured' }
  */
-export function buildStairRunGeometry(stairRun, fromPlatform, toPlatform, options = {}) {
+export function buildBoxStairGeometry(stairRun, fromPlatform, toPlatform, options = {}) {
     const builder = new PlatformGeometryBuilder();
 
     // Resolve anchor points
@@ -352,7 +352,7 @@ export function buildStairRunGeometry(stairRun, fromPlatform, toPlatform, option
 }
 
 // Resolve anchor to world-space point in WT units
-function resolveStairAnchor(platform, anchor) {
+export function resolveStairAnchor(platform, anchor) {
     if (!platform) {
         return { x: anchor.x, y: anchor.y ?? 0, z: anchor.z };
     }
@@ -363,7 +363,7 @@ function resolveStairAnchor(platform, anchor) {
 }
 
 // Determine run axis from platform edges or positions
-function computeStairRunAxis(topPlatform, topAnchor, bottomPlatform, bottomAnchor, topPt, bottomPt) {
+export function computeStairRunAxis(topPlatform, topAnchor, bottomPlatform, bottomAnchor, topPt, bottomPt) {
     // If top platform has an edge, use its normal direction
     if (topPlatform && topAnchor.edge) {
         const normal = Platform.edgeNormal(topAnchor.edge);
@@ -465,11 +465,17 @@ function pointInAnySubtractBrush(brushes, x, y, z) {
 // edge falls outside all subtractive brushes (i.e., into solid shell material).
 // If any probe point hits open air, the edge has at least one open span and
 // railings should be drawn — matching the old all-or-nothing semantics.
-function isEdgeAgainstWall(platform, edge, brushes) {
+//
+// Optional `opts.probeDist` (default 0.5 WT) controls how far past the edge
+// the probe extends — useful when the caller wants to detect walls that are
+// near but not flush against the edge.
+// Optional `opts.yProbe` (default platform.y - 0.5) overrides the Y at which
+// to probe — useful for checks below the slab (e.g. corner pillars).
+export function isEdgeAgainstWall(platform, edge, brushes, opts = {}) {
     if (!brushes || brushes.length === 0) return false;
 
-    const PROBE_DIST = 0.5;          // 0.5 WT past the edge
-    const yProbe = platform.y - 0.5; // halfway down the platform's thickness
+    const PROBE_DIST = opts.probeDist ?? 0.5;
+    const yProbe = opts.yProbe ?? (platform.y - 0.5);
 
     let edgePos, edgeMin, edgeMax;
     let probeAxis;     // 'x' or 'z'

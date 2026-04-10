@@ -15,6 +15,7 @@ export class StairRun {
         this.riseOverRun = riseOverRun;         // rise/run ratio (1 = 45 deg)
         this.grounded = false;                  // when true, side walls extend to Y=0
         this.railings = false;                  // when true, adds railings to sides
+        this.style = 'default';                 // visual style key — see src/geometry/platformStyles.js
     }
 
     // Resolve the world-space attachment point for one end of the stair run.
@@ -78,6 +79,7 @@ export class StairRun {
             riseOverRun: this.riseOverRun,
             grounded: this.grounded,
             railings: this.railings,
+            style: this.style,
         };
     }
 
@@ -89,6 +91,7 @@ export class StairRun {
         );
         r.grounded = j.grounded ?? false;
         r.railings = j.railings ?? false;
+        r.style = j.style ?? 'default';
         return r;
     }
 }

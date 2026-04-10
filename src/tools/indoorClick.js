@@ -159,6 +159,7 @@ export function handleIndoorClick(e, { gizmo, camera }) {
                 state.stairStepHeight,
                 state.stairRiseOverRun,
             );
+            run.style = state.platformStyle;
             state.stairRuns.push(run);
             rebuildStairRun(run);
 
@@ -254,6 +255,7 @@ export function handleIndoorClick(e, { gizmo, camera }) {
                 px, py, pz,
                 state.platformSizeX, state.platformSizeZ, state.platformThickness,
             );
+            plat.style = state.platformStyle;
             state.platforms.push(plat);
             rebuildPlatform(plat);
             state.selectedPlatformId = plat.id;
@@ -348,6 +350,8 @@ export function handleIndoorClick(e, { gizmo, camera }) {
                 state.stairStepHeight,
                 state.stairRiseOverRun,
             );
+            // Inherit style from the source platform so connected stairs match.
+            run.style = fromPlat.style || 'default';
             state.stairRuns.push(run);
             rebuildStairRun(run);
 

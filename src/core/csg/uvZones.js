@@ -245,6 +245,22 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
             // Wall — split along doorframe boundaries on tangent axes, classify inside/outside
             const axis = ax >= az ? 'x' : 'z';
 
+            // Stair-step riser routing — when this triangle belongs to a
+            // stair-push brush AND its dominant wall axis matches the stair's
+            // carve axis AND its normal sign matches the carve direction (i.e.
+            // it's the face pointing back toward the corridor), route it to
+            // zone 5 (stair_gradient). This catches the visible riser strips
+            // between adjacent stair columns; the side walls (perpendicular
+            // axis) and ceiling-drop face (opposite normal sign) fall through
+            // to the normal wall classification below.
+            if (ownerBrush && ownerBrush.isStairStep && axis === ownerBrush.stairAxis) {
+                const normalAlongAxis = axis === 'x' ? nx : nz;
+                if (normalAlongAxis * ownerBrush.stairCarveSign > 0.9) {
+                    emitTri(vA.clone(), vB.clone(), vC.clone(), nx, ny, nz, axis, 5, faceId, scheme, false, originY);
+                    continue;
+                }
+            }
+
             let wallTris = [{ a: vA.clone(), b: vB.clone(), c: vC.clone() }];
             for (const db of frameAABBs) {
                 if (axis === 'x') {

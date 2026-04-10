@@ -2,8 +2,9 @@
 
 import * as THREE from 'three';
 import { state } from '../state.js';
-import { buildStairRunGeometry, buildStairRunRailingGeometry } from '../geometry/platformGeometry.js';
-import { getWallMaterial, getTexturedMaterialArray, getRailingMaterial, getRailingGridMaterial } from '../scene/materials.js';
+import { buildStairRunRailingGeometry } from '../geometry/platformGeometry.js';
+import { getPlatformStyle } from '../geometry/platformStyles.js';
+import { getWallMaterial, getTexturedMaterialArrayForScheme, getRailingMaterial, getRailingGridMaterial } from '../scene/materials.js';
 import { scene } from '../scene/setup.js';
 import { reapplyBakedColors } from '../lighting/bakedColorStore.js';
 
@@ -20,19 +21,27 @@ export function rebuildStairRun(run) {
     const fromPlat = run.fromPlatformId != null ? state.platforms.find(p => p.id === run.fromPlatformId) : null;
     const toPlat = run.toPlatformId != null ? state.platforms.find(p => p.id === run.toPlatformId) : null;
 
-    const options = {};
+    // Effective style: prefer the run's own style; fall back to its connected
+    // platforms (existing saves predate the field, and stairs created from a
+    // simple-style platform should pick that up automatically).
+    const styleName = run.style || fromPlat?.style || toPlat?.style || 'default';
+    const style = getPlatformStyle(styleName);
+    const side = style.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+
+    const options = { brushes: state.csg.brushes };
     if (state.viewMode === 'textured') {
         options.viewMode = 'textured';
     }
-    const geometry = buildStairRunGeometry(run, fromPlat, toPlat, options);
+    const geometry = style.buildStair(run, fromPlat, toPlat, options);
 
     let material;
     if (state.viewMode === 'textured') {
-        material = getTexturedMaterialArray();
+        material = getTexturedMaterialArrayForScheme(style.schemeName, side);
     } else {
         material = getWallMaterial();
         material.vertexColors = true;
         material.map.repeat.set(1, 1);
+        material.side = side;
     }
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData = { stairRunId: run.id };

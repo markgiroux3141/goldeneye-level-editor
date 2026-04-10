@@ -32,6 +32,8 @@ export const state = {
         activeBrush: null,      // BrushDef being grown by consecutive +/- presses
         activeOp: null,         // 'push' | 'pull' | 'extrude'
         activeSide: null,       // 'min' | 'max' — original face side
+        // Active stair-extrude tracking (Arrow keys on a wall face)
+        activeStairOp: null,    // { brushIds: number[], direction: 'down'|'up', stepCount, anchorFace, selU0, selU1 }
         // Hole/door modal tool state
         holeMode: false,
         holeDoor: false,
@@ -68,6 +70,7 @@ export const state = {
     platformSizeX: DEFAULT_PLATFORM_SIZE_X,
     platformSizeZ: DEFAULT_PLATFORM_SIZE_Z,
     platformThickness: DEFAULT_PLATFORM_THICKNESS,
+    platformStyle: 'default',  // visual style for new platforms — see src/geometry/platformStyles.js
 
     // Radial menu state (transient)
     radialMenuOpen: false,
@@ -146,6 +149,7 @@ export function undo() {
     state.csg.activeBrush = null;
     state.csg.activeOp = null;
     state.csg.activeSide = null;
+    state.csg.activeStairOp = null;
     state.nextPlatformId = Math.max(...state.platforms.map(p => p.id), 0) + 1;
     state.nextStairRunId = Math.max(...state.stairRuns.map(r => r.id), 0) + 1;
     state.nextTerrainMapId = Math.max(...state.terrainMaps.map(t => t.id), 0) + 1;
@@ -190,6 +194,7 @@ export function deserializeLevel(json) {
     state.csg.activeBrush = null;
     state.csg.activeOp = null;
     state.csg.activeSide = null;
+    state.csg.activeStairOp = null;
     state.nextPlatformId = data.nextPlatformId || (Math.max(...state.platforms.map(p => p.id), 0) + 1);
     state.nextStairRunId = data.nextStairRunId || (Math.max(...state.stairRuns.map(r => r.id), 0) + 1);
     state.nextTerrainMapId = data.nextTerrainMapId || (Math.max(...state.terrainMaps.map(t => t.id), 0) + 1);

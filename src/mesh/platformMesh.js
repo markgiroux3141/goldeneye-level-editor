@@ -2,8 +2,9 @@
 
 import * as THREE from 'three';
 import { state } from '../state.js';
-import { buildPlatformGeometry, buildPlatformRailingGeometry } from '../geometry/platformGeometry.js';
-import { getWallMaterial, getTexturedMaterialArray, getRailingMaterial, getRailingGridMaterial } from '../scene/materials.js';
+import { buildPlatformRailingGeometry } from '../geometry/platformGeometry.js';
+import { getPlatformStyle } from '../geometry/platformStyles.js';
+import { getWallMaterial, getTexturedMaterialArrayForScheme, getRailingMaterial, getRailingGridMaterial } from '../scene/materials.js';
 import { scene } from '../scene/setup.js';
 import { reapplyBakedColors } from '../lighting/bakedColorStore.js';
 
@@ -17,19 +18,23 @@ export function rebuildPlatform(plat) {
         old.geometry.dispose();
     }
 
-    const options = {};
+    const style = getPlatformStyle(plat.style);
+    const side = style.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+
+    const options = { brushes: state.csg.brushes };
     if (state.viewMode === 'textured') {
         options.viewMode = 'textured';
     }
-    const geometry = buildPlatformGeometry(plat, options);
+    const geometry = style.buildPlatform(plat, options);
 
     let material;
     if (state.viewMode === 'textured') {
-        material = getTexturedMaterialArray();
+        material = getTexturedMaterialArrayForScheme(style.schemeName, side);
     } else {
         material = getWallMaterial();
         material.vertexColors = true;
         material.map.repeat.set(1, 1);
+        material.side = side;
     }
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData = { platformId: plat.id };

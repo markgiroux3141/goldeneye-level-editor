@@ -12,6 +12,7 @@ export class Platform {
         this.thickness = thickness; // slab depth in WT units (default 1)
         this.grounded = false;  // when true, extends down to Y=0
         this.railings = false;  // when true, adds railings to exposed edges
+        this.style = 'default'; // visual style key — see src/geometry/platformStyles.js
     }
 
     // Computed bounds
@@ -75,6 +76,7 @@ export class Platform {
             thickness: this.thickness,
             grounded: this.grounded,
             railings: this.railings,
+            style: this.style,
         };
     }
 
@@ -82,6 +84,7 @@ export class Platform {
         const p = new Platform(j.id, j.x, j.y, j.z, j.sizeX, j.sizeZ, j.thickness ?? 1);
         p.grounded = j.grounded ?? false;
         p.railings = j.railings ?? false;
+        p.style = j.style ?? 'default';
         return p;
     }
 }

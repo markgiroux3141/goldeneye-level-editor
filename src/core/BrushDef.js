@@ -17,6 +17,12 @@ export class BrushDef {
         this.isDoorframe = false;      // door frame brush (zone 5 walls + zone 6 floor)
         this.isHoleFrame = false;      // generic hole frame brush (zone 5 all sides)
         this.isBrace = false;          // structural brace brush (all faces zone 7)
+        // Stair-step brush (one column of a stair-push operation). The riser
+        // face — whose normal sign matches stairCarveSign along stairAxis —
+        // gets routed to zone 5 (stair_gradient). Other faces classify normally.
+        this.isStairStep = false;
+        this.stairAxis = null;         // 'x' | 'z' — wall normal axis being carved
+        this.stairCarveSign = 0;       // +1 | -1 — sign of the riser face normal along stairAxis
         this.schemeKey = 'facility_white_tile';
         this.floorY = y;               // WT-space anchor for wall texture vertical split
     }
@@ -58,6 +64,9 @@ export class BrushDef {
         b.isDoorframe = this.isDoorframe;
         b.isHoleFrame = this.isHoleFrame;
         b.isBrace = this.isBrace;
+        b.isStairStep = this.isStairStep;
+        b.stairAxis = this.stairAxis;
+        b.stairCarveSign = this.stairCarveSign;
         b.schemeKey = this.schemeKey;
         b.floorY = this.floorY;
         return b;
@@ -73,6 +82,11 @@ export class BrushDef {
         if (this.isDoorframe) j.isDoorframe = true;
         if (this.isHoleFrame) j.isHoleFrame = true;
         if (this.isBrace) j.isBrace = true;
+        if (this.isStairStep) {
+            j.isStairStep = true;
+            j.stairAxis = this.stairAxis;
+            j.stairCarveSign = this.stairCarveSign;
+        }
         if (this.schemeKey !== 'facility_white_tile') j.schemeKey = this.schemeKey;
         if (this.floorY !== this.y) j.floorY = this.floorY;
         return j;
@@ -84,6 +98,11 @@ export class BrushDef {
         if (j.isDoorframe) b.isDoorframe = true;
         if (j.isHoleFrame) b.isHoleFrame = true;
         if (j.isBrace) b.isBrace = true;
+        if (j.isStairStep) {
+            b.isStairStep = true;
+            b.stairAxis = j.stairAxis;
+            b.stairCarveSign = j.stairCarveSign;
+        }
         if (j.schemeKey) b.schemeKey = j.schemeKey;
         if (j.floorY !== undefined) b.floorY = j.floorY;
         return b;

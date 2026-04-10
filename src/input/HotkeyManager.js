@@ -17,6 +17,8 @@ const DEFAULT_BINDINGS = {
     'toggle_mode':      'KeyM',
     'push':             'Equal',      // +/= key
     'pull':             'Minus',      // - key
+    'stair_down':       'ArrowDown',  // push wall + carve stairs going down
+    'stair_up':         'ArrowUp',    // push wall + carve stairs going up
     'delete':           'KeyX',
     'undo':             'Ctrl+KeyZ',
     'save':             'Ctrl+KeyS',
@@ -43,6 +45,8 @@ const ACTION_LABELS = {
     'toggle_mode':      'Toggle Indoor/Terrain',
     'push':             'Push / Extrude',
     'pull':             'Pull / Shrink',
+    'stair_down':       'Stair Push Down',
+    'stair_up':         'Stair Push Up',
     'delete':           'Delete',
     'undo':             'Undo',
     'save':             'Save',
@@ -194,6 +198,10 @@ function formatKeyForDisplay(binding) {
          .replace('Equal', '+/=')
          .replace('Minus', '-')
          .replace('Escape', 'Esc')
+         .replace('ArrowDown', '↓')
+         .replace('ArrowUp', '↑')
+         .replace('ArrowLeft', '←')
+         .replace('ArrowRight', '→')
     );
     return formatted.join(' + ');
 }

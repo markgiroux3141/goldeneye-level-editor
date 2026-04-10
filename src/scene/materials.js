@@ -119,7 +119,9 @@ export function getDoorExitMaterial() {
 
 // Build material array for a specific texture scheme.
 // Returns array of 8 materials indexed by zone (0-7).
-export function getTexturedMaterialArrayForScheme(schemeName) {
+// `side` defaults to FrontSide; pass DoubleSide for plane-based styles whose
+// back faces should also be visible (e.g. simple-style platforms/stairs).
+export function getTexturedMaterialArrayForScheme(schemeName, side = THREE.FrontSide) {
     const scheme = TEXTURE_SCHEMES[schemeName] || TEXTURE_SCHEMES.facility_white_tile;
 
     return Object.keys(scheme.zones).sort((a, b) => a - b).map(zoneIdx => {
@@ -127,7 +129,7 @@ export function getTexturedMaterialArrayForScheme(schemeName) {
         if (zone.texture === null) {
             return new THREE.MeshLambertMaterial({
                 color: zone.color,
-                side: THREE.FrontSide,
+                side,
                 vertexColors: true,
             });
         }
@@ -135,7 +137,7 @@ export function getTexturedMaterialArrayForScheme(schemeName) {
         if (!baseTex) {
             return new THREE.MeshLambertMaterial({
                 color: 0xff00ff, // magenta = missing texture
-                side: THREE.FrontSide,
+                side,
                 vertexColors: true,
             });
         }
@@ -146,7 +148,7 @@ export function getTexturedMaterialArrayForScheme(schemeName) {
         t.needsUpdate = true;
         return new THREE.MeshLambertMaterial({
             map: t,
-            side: THREE.FrontSide,
+            side,
             vertexColors: true,
         });
     });
