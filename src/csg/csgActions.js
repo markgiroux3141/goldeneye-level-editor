@@ -18,6 +18,7 @@ import {
 } from '../core/constants.js';
 
 // ─── Constants ──────────────────────────────────────────────────────
+const PUSH_PULL_STEP = 4;
 const HOLE_WIDTH = 3;
 const HOLE_HEIGHT = 3;
 const DOOR_WIDTH = 3;
@@ -285,8 +286,8 @@ export function pushSelectedFace() {
         // Full-face push on a real brush — resize directly
         const { axis, side } = sel;
         const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
-        if (side === 'max') { brush[dimKey] += 1; }
-        else { brush[axis] -= 1; brush[dimKey] += 1; }
+        if (side === 'max') { brush[dimKey] += PUSH_PULL_STEP; }
+        else { brush[axis] -= PUSH_PULL_STEP; brush[dimKey] += PUSH_PULL_STEP; }
         if (axis === 'y' && side === 'min') brush.floorY = brush.y;
         sel.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
         csg.activeBrush = null;
@@ -294,10 +295,10 @@ export function pushSelectedFace() {
     } else {
         // Sub-face push or baked-face push — create/grow a subtractive brush
         if (csg.activeBrush && csg.activeOp === 'push') {
-            growActiveBrush(1);
+            growActiveBrush(PUSH_PULL_STEP);
         } else {
             csg.activeSide = sel.side;
-            csg.activeBrush = createSubFaceBrush('subtract', 1);
+            csg.activeBrush = createSubFaceBrush('subtract', PUSH_PULL_STEP);
             csg.activeOp = 'push';
         }
         csg.selectedFace = getActiveBrushOutwardFace();
@@ -316,21 +317,21 @@ export function pullSelectedFace() {
     const isBaked = sel.brushId === 0;
 
     if (csg.activeBrush && csg.activeOp === 'pull') {
-        growActiveBrush(1);
+        growActiveBrush(PUSH_PULL_STEP);
         csg.selectedFace = getActiveBrushInwardFace();
     } else if (isFullFace() && brush && !isBaked) {
         const { axis, side } = sel;
         const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
-        if (brush[dimKey] <= 1) return;
-        if (side === 'max') { brush[dimKey] -= 1; }
-        else { brush[axis] += 1; brush[dimKey] -= 1; }
+        if (brush[dimKey] <= PUSH_PULL_STEP) return;
+        if (side === 'max') { brush[dimKey] -= PUSH_PULL_STEP; }
+        else { brush[axis] += PUSH_PULL_STEP; brush[dimKey] -= PUSH_PULL_STEP; }
         if (axis === 'y' && side === 'min') brush.floorY = brush.y;
         sel.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
         csg.activeBrush = null;
         csg.activeSide = null;
     } else {
         csg.activeSide = sel.side;
-        csg.activeBrush = createSubFaceBrush('add', 1);
+        csg.activeBrush = createSubFaceBrush('add', PUSH_PULL_STEP);
         csg.activeOp = 'pull';
         csg.selectedFace = getActiveBrushInwardFace();
         csg.selSizeU = 0; csg.selSizeV = 0;
@@ -353,7 +354,7 @@ export function extrudeSelectedFace() {
     else if (isBaked) faceInfo = getBakedFaceUVInfo(sel);
     if (!faceInfo) return;
 
-    const depth = 1;
+    const depth = PUSH_PULL_STEP;
     let nx, ny, nz, nw, nh, nd;
 
     if (axis === 'x') {
