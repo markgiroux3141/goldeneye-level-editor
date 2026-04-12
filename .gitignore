@@ -7,3 +7,9 @@ public/existing goldeneye levels/
 *.swp
 *.swo
 *~
+
+# Rust / WASM
+target/
+pkg/
+Cargo.lock
+*.wasm

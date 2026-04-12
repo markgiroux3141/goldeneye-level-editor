@@ -84,6 +84,70 @@
             pointer-events: none;
         }
 
+        #analysis-panel {
+            display: none;
+            position: absolute;
+            top: 40px;
+            left: 10px;
+            z-index: 10;
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid #444;
+            padding: 10px;
+            font-size: 12px;
+            width: 220px;
+        }
+        #analysis-panel label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        #analysis-panel input[type="range"] {
+            width: 110px;
+            accent-color: #4a4;
+        }
+        #analysis-panel .section-title {
+            color: #aaa;
+            font-size: 11px;
+            text-transform: uppercase;
+            margin: 8px 0 4px;
+            border-top: 1px solid #333;
+            padding-top: 6px;
+        }
+        #analysis-panel .section-title:first-child {
+            margin-top: 0;
+            border-top: none;
+            padding-top: 0;
+        }
+        #analysis-panel button {
+            font-family: monospace;
+            font-size: 12px;
+            padding: 3px 8px;
+            background: #333;
+            color: #ccc;
+            border: 1px solid #555;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 4px;
+        }
+        #analysis-panel button:hover { border-color: #aaa; }
+        #analysis-panel select {
+            font-family: monospace;
+            font-size: 12px;
+            padding: 2px 4px;
+            background: #222;
+            color: #ccc;
+            border: 1px solid #555;
+        }
+        #analysis-stats {
+            margin-top: 8px;
+            color: #888;
+            font-size: 11px;
+            line-height: 1.5;
+            border-top: 1px solid #333;
+            padding-top: 6px;
+        }
+
         #help {
             position: absolute;
             bottom: 10px;
@@ -106,14 +170,35 @@
 <body>
     <div id="ui">
         <select id="level-select"></select>
-        <button id="toggle-mode">Textured</button>
-        <span id="mode-label">[C] to cycle</span>
+        <select id="mode-select"></select>
+    </div>
+    <div id="analysis-panel">
+        <div class="section-title">Predicted Lighting</div>
+        <label>Ambient <input type="range" id="sl-ambient" min="0" max="100" value="30"><span id="val-ambient">0.30</span></label>
+        <label>Intensity <input type="range" id="sl-intensity" min="0" max="100" value="70"><span id="val-intensity">0.70</span></label>
+        <label>Height Falloff <input type="range" id="sl-height" min="0" max="100" value="50"><span id="val-height">0.50</span></label>
+        <button id="btn-compute-heights">Compute Local Heights</button>
+        <div style="font-size:10px; color:#666; margin-top:2px">Raycasts up/down per vertex to find local floor/ceiling</div>
+
+        <div class="section-title">Ambient Occlusion</div>
+        <label>Samples
+            <select id="ao-samples">
+                <option value="8">8</option>
+                <option value="16" selected>16</option>
+                <option value="32">32</option>
+                <option value="64">64</option>
+            </select>
+        </label>
+        <label>Radius <input type="range" id="sl-ao-radius" min="50" max="2000" value="500"><span id="val-ao-radius">500</span></label>
+        <button id="btn-compute-ao">Compute AO</button>
+
+        <div id="analysis-stats"></div>
     </div>
     <div id="loading">Loading...</div>
     <div id="crosshair"></div>
     <div id="lock-prompt">Click to enter</div>
     <div id="speed-display"></div>
-    <div id="help">WASD: move &nbsp; Mouse: look &nbsp; Space: up &nbsp; Shift: sprint &nbsp; Scroll: speed &nbsp; C: cycle display mode</div>
+    <div id="help">WASD: move &nbsp; Mouse: look &nbsp; Space: up &nbsp; Shift: sprint &nbsp; Scroll: speed</div>
 
     <script type="module" src="./js/main.js"></script>
 </body>

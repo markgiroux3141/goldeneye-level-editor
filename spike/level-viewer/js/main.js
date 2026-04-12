@@ -5,6 +5,13 @@ import { createScene } from './scene-setup.js';
 import { initCamera } from './camera.js';
 import { parseOBJ, parseMTL } from './obj-parser.js';
 import { initUI } from './ui.js';
+import {
+    computeNormalDirectionColors,
+    computePredictedLighting,
+    computePredictionError,
+    computeAOEstimate,
+    computeLocalHeightMap,
+} from './analysis.js';
 
 // --- Setup ---
 const { scene, renderer } = createScene();
@@ -13,46 +20,103 @@ const { camera, update: updateCamera } = initCamera(canvas);
 const textureLoader = new THREE.TextureLoader();
 
 // --- Display modes ---
-// 0: Textured + lit + vertex colors (full)
-// 1: Flat shaded (no texture, no vcolors)
-// 2: Vertex colors only (unlit)
-// 3: Lit + vertex colors (no texture)
-// 4: Wireframe
-const MODE_COUNT = 5;
+// 0: Textured          1: Flat Shaded       2: Vertex Colors
+// 3: Lit + VColors     4: Wireframe         5: (separator)
+// 6: Normal Direction  7: Predicted         8: Predicted + Textured
+// 9: Error Map        10: AO Estimate
 let currentMode = 0;
 let currentMesh = null;
-let texturedMaterials = null;  // array of per-material-group Three.js materials
+let texturedMaterials = null;
+
+// Cached analysis data
+let actualColors = null;
+let aoColors = null;
+let heightMap = null;   // cached local floor/ceiling per vertex
+let analysisParams = { ambient: 0.3, intensity: 0.7, heightFalloff: 0.5 };
 
 // Simple materials for non-textured modes
 const flatMat = new THREE.MeshLambertMaterial({ color: 0xcccccc, flatShading: true, side: THREE.DoubleSide });
 const vcolorMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
 const litVcolorMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
 const wireMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+const analysisMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
 
 function applyMode() {
     if (!currentMesh) return;
+    const geom = currentMesh.geometry;
+    ui.showStats(null);
+
     switch (currentMode) {
-        case 0: // Textured + lit + vertex colors
+        case 0: // Textured
+            restoreActualColors(geom);
             currentMesh.material = texturedMaterials || flatMat;
             break;
         case 1: // Flat shaded
+            restoreActualColors(geom);
             currentMesh.material = flatMat;
             break;
         case 2: // Vertex colors only
+            restoreActualColors(geom);
             currentMesh.material = vcolorMat;
             break;
         case 3: // Lit + vertex colors
+            restoreActualColors(geom);
             currentMesh.material = litVcolorMat;
             break;
         case 4: // Wireframe
             currentMesh.material = wireMat;
             break;
+        case 6: // Normal direction
+            applyAnalysisColors(computeNormalDirectionColors(geom));
+            currentMesh.material = analysisMat;
+            break;
+        case 7: // Predicted lighting (no textures)
+            applyAnalysisColors(computePredictedLighting(geom, { ...analysisParams, heightMap }));
+            currentMesh.material = analysisMat;
+            break;
+        case 8: // Predicted + Textured
+            applyAnalysisColors(computePredictedLighting(geom, { ...analysisParams, heightMap }));
+            currentMesh.material = texturedMaterials || flatMat;
+            break;
+        case 9: // Error map
+            applyErrorMap();
+            currentMesh.material = analysisMat;
+            break;
+        case 10: // AO estimate
+            if (aoColors) {
+                applyAnalysisColors(aoColors);
+            } else {
+                // Gray placeholder until AO is computed
+                applyAnalysisColors(computePredictedLighting(geom, { ambient: 0.5, intensity: 0 }));
+            }
+            currentMesh.material = analysisMat;
+            break;
     }
+}
+
+function restoreActualColors(geom) {
+    if (!actualColors) return;
+    const colorAttr = geom.getAttribute('color');
+    colorAttr.array.set(actualColors);
+    colorAttr.needsUpdate = true;
+}
+
+function applyAnalysisColors(colors) {
+    const colorAttr = currentMesh.geometry.getAttribute('color');
+    colorAttr.array.set(colors);
+    colorAttr.needsUpdate = true;
+}
+
+function applyErrorMap() {
+    if (!actualColors) return;
+    const predicted = computePredictedLighting(currentMesh.geometry, { ...analysisParams, heightMap });
+    const { colors, stats } = computePredictionError(predicted, actualColors);
+    applyAnalysisColors(colors);
+    ui.showStats(stats);
 }
 
 // --- Texture loading ---
 
-// Load a BMP as a standard opaque texture
 function loadTexture(baseUrl, filename, clampS, clampT) {
     const tex = textureLoader.load(baseUrl + filename);
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -63,8 +127,6 @@ function loadTexture(baseUrl, filename, clampS, clampT) {
     return tex;
 }
 
-// Load a 32-bit BMP with real alpha channel via ArrayBuffer decoding.
-// Three.js TextureLoader strips alpha from BMPs, so we decode manually.
 async function loadTransparentBMP(url, clampS, clampT) {
     const resp = await fetch(url);
     const buf = await resp.arrayBuffer();
@@ -77,29 +139,27 @@ async function loadTransparentBMP(url, clampS, clampT) {
     const bpp = view.getUint16(28, true);
     const topDown = rawHeight < 0;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
+    const cvs = document.createElement('canvas');
+    cvs.width = width;
+    cvs.height = height;
+    const ctx = cvs.getContext('2d');
     const imageData = ctx.createImageData(width, height);
     const data = imageData.data;
 
     if (bpp === 32) {
-        // BGRA pixel data
         for (let y = 0; y < height; y++) {
             const srcRow = topDown ? y : (height - 1 - y);
             for (let x = 0; x < width; x++) {
                 const srcIdx = pixelOffset + (srcRow * width + x) * 4;
                 const dstIdx = (y * width + x) * 4;
-                data[dstIdx]     = view.getUint8(srcIdx + 2); // R
-                data[dstIdx + 1] = view.getUint8(srcIdx + 1); // G
-                data[dstIdx + 2] = view.getUint8(srcIdx);     // B
-                data[dstIdx + 3] = view.getUint8(srcIdx + 3); // A
+                data[dstIdx]     = view.getUint8(srcIdx + 2);
+                data[dstIdx + 1] = view.getUint8(srcIdx + 1);
+                data[dstIdx + 2] = view.getUint8(srcIdx);
+                data[dstIdx + 3] = view.getUint8(srcIdx + 3);
             }
         }
     } else {
-        // Fallback for 24-bit: treat near-black as transparent
-        const rowBytes = Math.ceil(width * 3 / 4) * 4; // rows are 4-byte aligned
+        const rowBytes = Math.ceil(width * 3 / 4) * 4;
         for (let y = 0; y < height; y++) {
             const srcRow = topDown ? y : (height - 1 - y);
             for (let x = 0; x < width; x++) {
@@ -117,8 +177,7 @@ async function loadTransparentBMP(url, clampS, clampT) {
     }
 
     ctx.putImageData(imageData, 0, 0);
-
-    const tex = new THREE.CanvasTexture(canvas);
+    const tex = new THREE.CanvasTexture(cvs);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = clampS ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
     tex.wrapT = clampT ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
@@ -128,10 +187,10 @@ async function loadTransparentBMP(url, clampS, clampT) {
 }
 
 async function buildTexturedMaterials(mtlData, materialGroups, baseUrl) {
-    const texCache = new Map();        // opaque texture cache
-    const transTexCache = new Map();   // transparent texture cache (promises)
+    const texCache = new Map();
+    const transTexCache = new Map();
     const mats = [];
-    const transLoads = [];  // { index, promise }
+    const transLoads = [];
 
     for (let i = 0; i < materialGroups.length; i++) {
         const group = materialGroups[i];
@@ -142,46 +201,33 @@ async function buildTexturedMaterials(mtlData, materialGroups, baseUrl) {
             const cacheKey = mtl.texture + (mtl.clampS ? '_cS' : '') + (mtl.clampT ? '_cT' : '');
 
             if (isTransparent) {
-                // Transparent: need async BMP decode for alpha
                 if (!transTexCache.has(cacheKey)) {
                     transTexCache.set(cacheKey, loadTransparentBMP(
                         baseUrl + mtl.texture, mtl.clampS, mtl.clampT
                     ));
                 }
-                // Placeholder material - texture assigned after load
                 const mat = new THREE.MeshLambertMaterial({
-                    vertexColors: true,
-                    flatShading: true,
-                    side: THREE.DoubleSide,
-                    transparent: true,
-                    alphaTest: 0.5,
-                    depthWrite: false,
+                    vertexColors: true, flatShading: true, side: THREE.DoubleSide,
+                    transparent: true, alphaTest: 0.5, depthWrite: false,
                 });
                 mats.push(mat);
                 transLoads.push({ index: i, promise: transTexCache.get(cacheKey) });
             } else {
-                // Opaque: synchronous TextureLoader is fine
                 if (!texCache.has(cacheKey)) {
                     texCache.set(cacheKey, loadTexture(baseUrl, mtl.texture, mtl.clampS, mtl.clampT));
                 }
                 mats.push(new THREE.MeshLambertMaterial({
-                    map: texCache.get(cacheKey),
-                    vertexColors: true,
-                    flatShading: true,
-                    side: THREE.DoubleSide,
+                    map: texCache.get(cacheKey), vertexColors: true,
+                    flatShading: true, side: THREE.DoubleSide,
                 }));
             }
         } else {
-            // UNTEXTURED or unknown material
             mats.push(new THREE.MeshLambertMaterial({
-                vertexColors: true,
-                flatShading: true,
-                side: THREE.DoubleSide,
+                vertexColors: true, flatShading: true, side: THREE.DoubleSide,
             }));
         }
     }
 
-    // Resolve all transparent texture loads and assign to materials
     if (transLoads.length > 0) {
         const results = await Promise.all(transLoads.map(t => t.promise));
         for (let i = 0; i < transLoads.length; i++) {
@@ -197,7 +243,6 @@ async function buildTexturedMaterials(mtlData, materialGroups, baseUrl) {
 async function loadLevel(folderName) {
     ui.showLoading(true);
 
-    // Clean up previous
     if (currentMesh) {
         scene.remove(currentMesh);
         currentMesh.geometry.dispose();
@@ -209,12 +254,14 @@ async function loadLevel(folderName) {
         }
         currentMesh = null;
         texturedMaterials = null;
+        actualColors = null;
+        aoColors = null;
+        heightMap = null;
     }
 
     try {
         const baseUrl = `../../public/existing goldeneye levels/${folderName}/`;
 
-        // Fetch OBJ and MTL in parallel
         const [objResp, mtlResp] = await Promise.all([
             fetch(baseUrl + 'LevelIndices.obj'),
             fetch(baseUrl + 'LevelIndices.mtl')
@@ -228,19 +275,19 @@ async function loadLevel(folderName) {
         const mtlData = parseMTL(mtlText);
         const { geometry, materialGroups } = parseOBJ(objText);
 
-        // Assign material indices to geometry groups
         for (let i = 0; i < materialGroups.length; i++) {
             geometry.groups[i].materialIndex = i;
         }
 
-        // Build per-group textured materials (async for transparent BMP decoding)
         texturedMaterials = await buildTexturedMaterials(mtlData, materialGroups, baseUrl);
+
+        const colorAttr = geometry.getAttribute('color');
+        actualColors = new Float32Array(colorAttr.array);
 
         currentMesh = new THREE.Mesh(geometry, texturedMaterials);
         scene.add(currentMesh);
         applyMode();
 
-        // Position camera at bounding box center
         const center = new THREE.Vector3();
         geometry.boundingBox.getCenter(center);
         camera.position.copy(center);
@@ -256,15 +303,71 @@ function setMode(index) {
     applyMode();
 }
 
+function onParamsChange(params) {
+    analysisParams.ambient = params.ambient;
+    analysisParams.intensity = params.intensity;
+    analysisParams.heightFalloff = params.heightFalloff;
+    if (currentMode === 7 || currentMode === 8 || currentMode === 9) {
+        applyMode();
+    }
+}
+
+async function onComputeAO(params) {
+    if (!currentMesh) return;
+    ui.showLoading(true);
+    ui.setLoadingText('Computing AO...');
+    aoColors = null;
+
+    try {
+        aoColors = await computeAOEstimate(currentMesh.geometry, currentMesh, {
+            samples: params.aoSamples,
+            radius: params.aoRadius,
+            onProgress(frac) {
+                ui.setLoadingText(`Computing AO... ${(frac * 100).toFixed(0)}%`);
+            }
+        });
+
+        if (currentMode === 10) applyMode();
+    } catch (err) {
+        console.error('AO computation failed:', err);
+    }
+
+    ui.setLoadingText('Loading...');
+    ui.showLoading(false);
+}
+
+async function onComputeHeights() {
+    if (!currentMesh) return;
+    ui.showLoading(true);
+    ui.setLoadingText('Computing local heights...');
+    heightMap = null;
+
+    try {
+        heightMap = await computeLocalHeightMap(currentMesh.geometry, currentMesh, {
+            onProgress(frac) {
+                ui.setLoadingText(`Computing heights... ${(frac * 100).toFixed(0)}%`);
+            }
+        });
+
+        // Re-apply if in a mode that uses height
+        if (currentMode === 7 || currentMode === 8 || currentMode === 9) {
+            applyMode();
+        }
+    } catch (err) {
+        console.error('Height map computation failed:', err);
+    }
+
+    ui.setLoadingText('Loading...');
+    ui.showLoading(false);
+}
+
 // --- UI ---
 const ui = initUI({
     onLevelChange: loadLevel,
-    onToggleMode: setMode
-});
-
-// Keyboard shortcut for mode cycling
-document.addEventListener('keydown', (e) => {
-    if (e.code === 'KeyC') ui.cycleMode();
+    onToggleMode: setMode,
+    onParamsChange,
+    onComputeAO,
+    onComputeHeights,
 });
 
 // --- Animation loop ---
