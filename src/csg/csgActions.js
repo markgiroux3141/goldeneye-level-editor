@@ -862,7 +862,7 @@ export function computeBracePreview(hitFace, hitPoint) {
     // Each brace brush is extended 1 WT into the surrounding solid on its
     // hidden faces (the ones flush against walls / floor / ceiling). Burying
     // those faces inside solid material avoids coplanar CSG artifacts where
-    // three-bvh-csg would otherwise emit stray triangles at the seam.
+    // the CSG engine would otherwise emit stray triangles at the seam.
     let wall1, ceiling, wall2;
 
     if (hitFace.axis === 'x') {

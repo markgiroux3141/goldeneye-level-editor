@@ -31,6 +31,7 @@ import { handleIndoorClick } from './tools/indoorClick.js';
 import { handleTerrainClick, handleTerrainMouseUp, handleTerrainMouseMove, handleTerrainWheel, getIsSculpting } from './tools/terrainClick.js';
 import { handleIndoorKey } from './tools/indoorKeys.js';
 import { handleTerrainKey } from './tools/terrainKeys.js';
+import { initCSGWasm } from './core/csg/wasmCSG.js';
 
 // ============================================================
 // INIT
@@ -133,6 +134,7 @@ onKeyDown((e) => {
 // INIT — load schemes, then start
 // ============================================================
 (async () => {
+    await initCSGWasm();
     await loadTextureSchemes();
     initMaterials();
 

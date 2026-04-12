@@ -195,9 +195,10 @@ export function assignBrushToRegion(brush) {
             brushToRegion.set(b.id, primaryRid);
         }
 
-        // If mergeRegion had baked geometry, we need a full rebuild
-        // to properly merge the baked CSG brushes.
-        if (mergeRegion.bakedCSGBrush) {
+        // If mergeRegion had baked brushes, move them over and do a full rebuild
+        // to properly merge the baked sets.
+        if (mergeRegion.bakedBrushes.length > 0) {
+            primaryRegion.bakedBrushes.push(...mergeRegion.bakedBrushes);
             primaryRegion.brushes.push(brush);
             brushToRegion.set(brush.id, primaryRid);
             rebuildAllCSG();

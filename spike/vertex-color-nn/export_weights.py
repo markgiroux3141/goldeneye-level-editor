@@ -60,7 +60,7 @@ def main():
         for l in layers
     )
     print(f'Exported {n_params:,} parameters to {OUTPUT_PATH} ({size_kb:.1f} KB)')
-    print(f'Layers: {" → ".join(str(len(l["bias"])) for l in layers)}')
+    print(f'Layers: {" -> ".join(str(len(l["bias"])) for l in layers)}')
 
 
 if __name__ == '__main__':

@@ -1,10 +1,6 @@
 // BrushDef — a single CSG brush (additive or subtractive) with optional per-face taper.
 // Ported from spike/csg/main.js (BrushDef class + applyTaperToBoxGeo).
 
-import * as THREE from 'three';
-import { Brush as CSGBrush } from 'three-bvh-csg';
-import { WORLD_SCALE } from './constants.js';
-
 export class BrushDef {
     constructor(id, op, x, y, z, w, h, d) {
         this.id = id;
@@ -28,20 +24,6 @@ export class BrushDef {
     }
 
     hasTaper() { return Object.keys(this.taper).length > 0; }
-
-    toCSGBrush() {
-        const geo = new THREE.BoxGeometry(this.w * WORLD_SCALE, this.h * WORLD_SCALE, this.d * WORLD_SCALE);
-        if (this.hasTaper()) {
-            applyTaperToBoxGeo(geo, this);
-        }
-        const cx = (this.x + this.w / 2) * WORLD_SCALE;
-        const cy = (this.y + this.h / 2) * WORLD_SCALE;
-        const cz = (this.z + this.d / 2) * WORLD_SCALE;
-        const brush = new CSGBrush(geo);
-        brush.position.set(cx, cy, cz);
-        brush.updateMatrixWorld();
-        return brush;
-    }
 
     getFaces() {
         return [
@@ -107,48 +89,4 @@ export class BrushDef {
         if (j.floorY !== undefined) b.floorY = j.floorY;
         return b;
     }
-}
-
-// ─── Taper: Modify BoxGeometry Vertices In-Place ────────────────────────
-// Instead of building custom geometry, we modify a standard BoxGeometry.
-// This preserves the index buffer, UVs, and groups that three-bvh-csg expects.
-// For each tapered face, we find all vertices at that face's position and
-// move them toward the face center in the face's UV plane.
-function applyTaperToBoxGeo(geo, brush) {
-    const pos = geo.getAttribute('position');
-    const hw = brush.w * WORLD_SCALE / 2;
-    const hh = brush.h * WORLD_SCALE / 2;
-    const hd = brush.d * WORLD_SCALE / 2;
-
-    for (const [faceKey, { u: tU, v: tV }] of Object.entries(brush.taper)) {
-        const [axis, side] = faceKey.split('-');
-
-        let checkAxis, target, uAxis, vAxis;
-        if (axis === 'y') {
-            checkAxis = 1; target = side === 'max' ? hh : -hh;
-            uAxis = 0; vAxis = 2;
-        } else if (axis === 'x') {
-            checkAxis = 0; target = side === 'max' ? hw : -hw;
-            uAxis = 2; vAxis = 1;
-        } else {
-            checkAxis = 2; target = side === 'max' ? hd : -hd;
-            uAxis = 0; vAxis = 1;
-        }
-
-        const getComp = (i, c) => c === 0 ? pos.getX(i) : c === 1 ? pos.getY(i) : pos.getZ(i);
-
-        for (let i = 0; i < pos.count; i++) {
-            const val = getComp(i, checkAxis);
-            if (Math.abs(val - target) < 0.001) {
-                const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-                const coords = [x, y, z];
-                coords[uAxis] -= Math.sign(coords[uAxis]) * tU * WORLD_SCALE;
-                coords[vAxis] -= Math.sign(coords[vAxis]) * tV * WORLD_SCALE;
-                pos.setXYZ(i, coords[0], coords[1], coords[2]);
-            }
-        }
-    }
-
-    pos.needsUpdate = true;
-    geo.computeVertexNormals();
 }

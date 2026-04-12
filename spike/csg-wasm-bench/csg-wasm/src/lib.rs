@@ -27,12 +27,12 @@ struct BrushInput {
     id: i32,
     #[serde(default = "default_op")]
     op: String,
-    x: i32,
-    y: i32,
-    z: i32,
-    w: i32,
-    h: i32,
-    d: i32,
+    x: f64,
+    y: f64,
+    z: f64,
+    w: f64,
+    h: f64,
+    d: f64,
     #[serde(default)]
     taper: HashMap<String, TaperValue>,
 }
@@ -51,12 +51,13 @@ struct RegionInput {
 
 /// Convert a brush definition to 6 quad polygons (a closed convex box).
 fn brush_to_polygons(b: &BrushInput, ws: f32) -> Vec<Polygon> {
-    let x0 = b.x as f32 * ws;
-    let x1 = (b.x + b.w) as f32 * ws;
-    let y0 = b.y as f32 * ws;
-    let y1 = (b.y + b.h) as f32 * ws;
-    let z0 = b.z as f32 * ws;
-    let z1 = (b.z + b.d) as f32 * ws;
+    let ws64 = ws as f64;
+    let x0 = (b.x * ws64) as f32;
+    let x1 = ((b.x + b.w) * ws64) as f32;
+    let y0 = (b.y * ws64) as f32;
+    let y1 = ((b.y + b.h) * ws64) as f32;
+    let z0 = (b.z * ws64) as f32;
+    let z1 = ((b.z + b.d) * ws64) as f32;
 
     // 8 corners of the box
     let mut c: [[f32; 3]; 8] = [

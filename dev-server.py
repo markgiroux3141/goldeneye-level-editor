@@ -7,7 +7,12 @@ Usage: python dev-server.py [port]   (default port 8765)
 """
 
 import sys
+import mimetypes
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+
+# Ensure .wasm files are served with the correct MIME type so that
+# WebAssembly.instantiateStreaming works without a Content-Type mismatch.
+mimetypes.add_type('application/wasm', '.wasm')
 
 
 class NoCacheHandler(SimpleHTTPRequestHandler):
