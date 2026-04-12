@@ -12,6 +12,7 @@ import {
     computeAOEstimate,
     computeLocalHeightMap,
 } from './analysis.js';
+import { loadModel, computeNNColors } from './nn-inference.js';
 
 // --- Setup ---
 const { scene, renderer } = createScene();
@@ -24,6 +25,7 @@ const textureLoader = new THREE.TextureLoader();
 // 3: Lit + VColors     4: Wireframe         5: (separator)
 // 6: Normal Direction  7: Predicted         8: Predicted + Textured
 // 9: Error Map        10: AO Estimate
+// 11: NN Vertex Colors 12: NN + Textured
 let currentMode = 0;
 let currentMesh = null;
 let texturedMaterials = null;
@@ -31,7 +33,9 @@ let texturedMaterials = null;
 // Cached analysis data
 let actualColors = null;
 let aoColors = null;
+let nnColors = null;    // cached NN inference result
 let heightMap = null;   // cached local floor/ceiling per vertex
+let currentLevelOutdoor = false;
 let analysisParams = { ambient: 0.3, intensity: 0.7, heightFalloff: 0.5 };
 
 // Simple materials for non-textured modes
@@ -86,10 +90,19 @@ function applyMode() {
             if (aoColors) {
                 applyAnalysisColors(aoColors);
             } else {
-                // Gray placeholder until AO is computed
                 applyAnalysisColors(computePredictedLighting(geom, { ambient: 0.5, intensity: 0 }));
             }
             currentMesh.material = analysisMat;
+            break;
+        case 11: // NN Vertex Colors
+            if (nnColors) applyAnalysisColors(nnColors);
+            else applyAnalysisColors(computePredictedLighting(geom, { ambient: 0.5, intensity: 0 }));
+            currentMesh.material = analysisMat;
+            break;
+        case 12: // NN + Textured
+            if (nnColors) applyAnalysisColors(nnColors);
+            else restoreActualColors(geom);
+            currentMesh.material = texturedMaterials || flatMat;
             break;
     }
 }
@@ -105,6 +118,14 @@ function applyAnalysisColors(colors) {
     const colorAttr = currentMesh.geometry.getAttribute('color');
     colorAttr.array.set(colors);
     colorAttr.needsUpdate = true;
+}
+
+function onComputeNN() {
+    if (!currentMesh || !actualColors) return;
+    nnColors = computeNNColors(
+        currentMesh.geometry, actualColors, currentLevelOutdoor, heightMap
+    );
+    if (currentMode === 11 || currentMode === 12) applyMode();
 }
 
 function applyErrorMap() {
@@ -256,6 +277,7 @@ async function loadLevel(folderName) {
         texturedMaterials = null;
         actualColors = null;
         aoColors = null;
+        nnColors = null;
         heightMap = null;
     }
 
@@ -283,6 +305,9 @@ async function loadLevel(folderName) {
 
         const colorAttr = geometry.getAttribute('color');
         actualColors = new Float32Array(colorAttr.array);
+
+        const OUTDOOR = ['01 - Dam','03 - Runway','04 - Surface1','08 - Surface2','15 - Jungle','18 - Cradle'];
+        currentLevelOutdoor = OUTDOOR.includes(folderName);
 
         currentMesh = new THREE.Mesh(geometry, texturedMaterials);
         scene.add(currentMesh);
@@ -349,8 +374,10 @@ async function onComputeHeights() {
             }
         });
 
+        nnColors = null; // invalidate NN cache since heightMap changed
+
         // Re-apply if in a mode that uses height
-        if (currentMode === 7 || currentMode === 8 || currentMode === 9) {
+        if (currentMode >= 7 && currentMode <= 12) {
             applyMode();
         }
     } catch (err) {
@@ -368,6 +395,7 @@ const ui = initUI({
     onParamsChange,
     onComputeAO,
     onComputeHeights,
+    onComputeNN,
 });
 
 // --- Animation loop ---
@@ -382,4 +410,5 @@ function animate() {
 
 // --- Start ---
 animate();
+loadModel().then(() => console.log('NN model ready'));
 loadLevel(ui.getSelectedLevel());

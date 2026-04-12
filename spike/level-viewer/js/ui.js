@@ -36,6 +36,8 @@ const MODE_NAMES = [
     'Predicted + Textured',
     'Error Map',
     'AO Estimate',
+    'NN Vertex Colors',
+    'NN + Textured',
 ];
 
 // Modes at index >= FIRST_ANALYSIS_MODE show the analysis panel
@@ -43,7 +45,7 @@ const FIRST_ANALYSIS_MODE = 6;
 // The separator at index 5 is not selectable (disabled)
 const SEPARATOR_INDEX = 5;
 
-export function initUI({ onLevelChange, onToggleMode, onParamsChange, onComputeAO, onComputeHeights }) {
+export function initUI({ onLevelChange, onToggleMode, onParamsChange, onComputeAO, onComputeHeights, onComputeNN }) {
     const levelSelect = document.getElementById('level-select');
     const modeSelect = document.getElementById('mode-select');
     const analysisPanel = document.getElementById('analysis-panel');
@@ -126,6 +128,12 @@ export function initUI({ onLevelChange, onToggleMode, onParamsChange, onComputeA
     document.getElementById('btn-compute-heights').addEventListener('click', (e) => {
         e.stopPropagation();
         if (onComputeHeights) onComputeHeights();
+    });
+
+    // NN compute button
+    document.getElementById('btn-compute-nn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (onComputeNN) onComputeNN();
     });
 
     return {
