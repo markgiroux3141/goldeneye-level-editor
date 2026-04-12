@@ -531,12 +531,59 @@ function getStairOccupiedRanges(platform, edge, stairRuns) {
     return merged;
 }
 
+// Get ranges along an edge (0..1) occupied by adjacent platforms at the same height
+function getAdjacentPlatformOccupiedRanges(platform, edge, allPlatforms) {
+    const ranges = [];
+    const edgeLen = platform.getEdgeLength(edge);
+    if (edgeLen < 0.001) return ranges;
+
+    for (const other of allPlatforms) {
+        if (other.id === platform.id) continue;
+        if (Math.abs(other.y - platform.y) > 0.01) continue; // different height
+
+        let overlap = null;
+        if (edge === 'xMin' && Math.abs(other.maxX - platform.x) < 0.01) {
+            // other's xMax touches our xMin — both run along Z
+            const lo = Math.max(platform.z, other.z);
+            const hi = Math.min(platform.maxZ, other.maxZ);
+            if (hi > lo + 0.001) overlap = [(lo - platform.z) / edgeLen, (hi - platform.z) / edgeLen];
+        } else if (edge === 'xMax' && Math.abs(other.x - platform.maxX) < 0.01) {
+            const lo = Math.max(platform.z, other.z);
+            const hi = Math.min(platform.maxZ, other.maxZ);
+            if (hi > lo + 0.001) overlap = [(lo - platform.z) / edgeLen, (hi - platform.z) / edgeLen];
+        } else if (edge === 'zMin' && Math.abs(other.maxZ - platform.z) < 0.01) {
+            const lo = Math.max(platform.x, other.x);
+            const hi = Math.min(platform.maxX, other.maxX);
+            if (hi > lo + 0.001) overlap = [(lo - platform.x) / edgeLen, (hi - platform.x) / edgeLen];
+        } else if (edge === 'zMax' && Math.abs(other.z - platform.maxZ) < 0.01) {
+            const lo = Math.max(platform.x, other.x);
+            const hi = Math.min(platform.maxX, other.maxX);
+            if (hi > lo + 0.001) overlap = [(lo - platform.x) / edgeLen, (hi - platform.x) / edgeLen];
+        }
+        if (overlap) ranges.push(overlap);
+    }
+    return ranges;
+}
+
 // Get the free (unoccupied) segments of an edge as t-ranges in [0,1]
-function getFreeEdgeSegments(platform, edge, stairRuns) {
-    const occupied = getStairOccupiedRanges(platform, edge, stairRuns);
+function getFreeEdgeSegments(platform, edge, stairRuns, allPlatforms) {
+    const occupied = [
+        ...getStairOccupiedRanges(platform, edge, stairRuns),
+        ...getAdjacentPlatformOccupiedRanges(platform, edge, allPlatforms),
+    ];
+    // Sort by start and merge overlapping ranges
+    occupied.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    for (const r of occupied) {
+        if (merged.length > 0 && r[0] <= merged[merged.length - 1][1] + 0.001) {
+            merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], r[1]);
+        } else {
+            merged.push([...r]);
+        }
+    }
     const free = [];
     let cursor = 0;
-    for (const [lo, hi] of occupied) {
+    for (const [lo, hi] of merged) {
         if (lo > cursor + 0.001) free.push([cursor, lo]);
         cursor = hi;
     }
@@ -550,7 +597,7 @@ function getFreeEdgeSegments(platform, edge, stairRuns) {
  * Railings are added to free segments of each edge (not blocked by walls or stairs).
  * `brushes` is `state.csg.brushes` — used for wall-proximity checks.
  */
-export function buildPlatformRailingGeometry(platform, stairRuns, brushes) {
+export function buildPlatformRailingGeometry(platform, stairRuns, brushes, allPlatforms = []) {
     const builder = new PlatformGeometryBuilder();
     const yTop = platform.y;
     const railTop = yTop + RAILING_HEIGHT;
@@ -562,7 +609,7 @@ export function buildPlatformRailingGeometry(platform, stairRuns, brushes) {
         const line = platform.getEdgeLine(edge);
         const edgeNorm = Platform.edgeNormal(edge);
         const edgeLen = platform.getEdgeLength(edge);
-        const freeSegments = getFreeEdgeSegments(platform, edge, stairRuns);
+        const freeSegments = getFreeEdgeSegments(platform, edge, stairRuns, allPlatforms);
 
         for (const [tStart, tEnd] of freeSegments) {
             const segLen = (tEnd - tStart) * edgeLen;

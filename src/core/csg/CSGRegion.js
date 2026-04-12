@@ -54,6 +54,12 @@ export class CSGRegion {
 
     // Run CSG: shell - bakedCSGBrush ± each unbaked brush.
     // Returns the result as { geometry, faceIds, timeMs }.
+    //
+    // Optimization: consecutive subtractive brushes are pre-merged into a
+    // single CSG brush via ADDITION before being subtracted from the shell.
+    // This turns N sequential subtractions (each against increasingly complex
+    // geometry) into (N-1) cheap unions of simple boxes + 1 subtraction.
+    // Massive win for stairs (10 step brushes → 1 merged staircase shape).
     evaluateBrushes() {
         this.updateShell();
         const t0 = performance.now();
@@ -64,10 +70,36 @@ export class CSGRegion {
             result = csgEvaluator.evaluate(result, this.bakedCSGBrush, SUBTRACTION);
         }
 
-        for (const brush of this.brushes) {
-            const csgBrush = brush.toCSGBrush();
+        // Group consecutive same-op brushes for pre-merging.
+        // Runs of 3+ subtractive brushes are unioned first, then subtracted once.
+        let i = 0;
+        while (i < this.brushes.length) {
+            const brush = this.brushes[i];
             const op = brush.op === 'subtract' ? SUBTRACTION : ADDITION;
-            result = csgEvaluator.evaluate(result, csgBrush, op);
+
+            // Look ahead for a run of same-op brushes worth pre-merging
+            if (op === SUBTRACTION) {
+                let runEnd = i + 1;
+                while (runEnd < this.brushes.length && this.brushes[runEnd].op === 'subtract') {
+                    runEnd++;
+                }
+                const runLen = runEnd - i;
+
+                if (runLen >= 3) {
+                    // Pre-merge: union all brushes in this run, then subtract once
+                    let merged = this.brushes[i].toCSGBrush();
+                    for (let j = i + 1; j < runEnd; j++) {
+                        merged = csgEvaluator.evaluate(merged, this.brushes[j].toCSGBrush(), ADDITION);
+                    }
+                    result = csgEvaluator.evaluate(result, merged, SUBTRACTION);
+                    i = runEnd;
+                    continue;
+                }
+            }
+
+            // Single brush or short run — apply directly
+            result = csgEvaluator.evaluate(result, brush.toCSGBrush(), op);
+            i++;
         }
 
         const elapsed = performance.now() - t0;

@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 import { state } from '../state.js';
 import { BrushDef } from '../core/BrushDef.js';
-import { csgRegionMeshes, rebuildAllCSG } from '../mesh/csgMesh.js';
+import { csgRegionMeshes, rebuildAllCSG, rebuildAffectedRegions, assignBrushToRegion, assignBrushToRegionDirect, removeBrushFromRegion } from '../mesh/csgMesh.js';
 import { findRoomBrushes } from '../core/csg/regions.js';
 import {
     WORLD_SCALE, WALL_THICKNESS, WALL_SPLIT_V,
@@ -305,7 +305,9 @@ export function pushSelectedFace() {
         csg.selSizeU = 0; csg.selSizeV = 0;
     }
 
-    rebuildAllCSG();
+    const affectedId = csg.activeBrush ? csg.activeBrush.id : (brush ? brush.id : null);
+    if (affectedId != null) rebuildAffectedRegions([affectedId]);
+    else rebuildAllCSG();
 }
 
 export function pullSelectedFace() {
@@ -337,7 +339,9 @@ export function pullSelectedFace() {
         csg.selSizeU = 0; csg.selSizeV = 0;
     }
 
-    rebuildAllCSG();
+    const affectedId = csg.activeBrush ? csg.activeBrush.id : (brush ? brush.id : null);
+    if (affectedId != null) rebuildAffectedRegions([affectedId]);
+    else rebuildAllCSG();
 }
 
 export function extrudeSelectedFace() {
@@ -390,7 +394,8 @@ export function extrudeSelectedFace() {
     };
     csg.selSizeU = 0; csg.selSizeV = 0;
 
-    rebuildAllCSG();
+    assignBrushToRegion(newBrush);
+    rebuildAffectedRegions([newBrush.id]);
 }
 
 // Continue an active extrude (called when user presses + after extrude)
@@ -399,7 +404,7 @@ export function growActiveExtrude() {
     if (!csg.activeBrush || csg.activeOp !== 'extrude') return false;
     growActiveBrush(1);
     csg.selectedFace = getActiveBrushOutwardFace();
-    rebuildAllCSG();
+    rebuildAffectedRegions([csg.activeBrush.id]);
     return true;
 }
 
@@ -436,11 +441,12 @@ function stairAnchorMatches(a, b) {
         && a.position === b.position;
 }
 
-// Remove brushes by id from the global brush list. No rebuild — caller does it.
+// Remove brushes by id from the global brush list and region tracking. No rebuild — caller does it.
 function removeBrushesByIds(ids) {
     if (!ids || ids.length === 0) return;
     const idSet = new Set(ids);
     state.csg.brushes = state.csg.brushes.filter(b => !idSet.has(b.id));
+    for (const id of ids) removeBrushFromRegion(id);
 }
 
 // Build N subtractive brushes that carve a staircase into the selected wall.
@@ -625,9 +631,26 @@ export function pushSelectedFaceAsStairs(direction) {
         selU1: csg.selU1,
     };
 
+    // Register new stair brushes directly in the known region (skip O(n) overlap scan).
+    // We already know the region from the selected face — no need to test overlap.
+    const regionData = csgRegionMeshes.get(sel.regionId);
+    if (regionData && regionData.region) {
+        const brushById = new Map(state.csg.brushes.map(b => [b.id, b]));
+        for (const nid of newIds) {
+            const nb = brushById.get(nid);
+            if (nb) regionData.region.brushes.push(nb);
+            assignBrushToRegionDirect(nid, sel.regionId);
+        }
+    } else {
+        for (const nid of newIds) {
+            const nb = state.csg.brushes.find(b => b.id === nid);
+            if (nb) assignBrushToRegion(nb);
+        }
+    }
+
     // Keep the visible selection pinned to the original wall plane so
     // subsequent presses keep finding the same active op.
-    rebuildAllCSG();
+    rebuildAffectedRegions(newIds);
 }
 
 export function scaleSelectedFace(deltaU, deltaV) {
@@ -652,7 +675,7 @@ export function scaleSelectedFace(deltaU, deltaV) {
 
     if (t.u === 0 && t.v === 0) delete brush.taper[faceKey];
 
-    rebuildAllCSG();
+    rebuildAffectedRegions([brush.id]);
 }
 
 // ─── Hole / Door Modal Tool ──────────────────────────────────────────
@@ -781,7 +804,9 @@ export function confirmHolePlacement() {
     csg.selSizeU = 0; csg.selSizeV = 0;
     csg.activeBrush = null; csg.activeOp = null; csg.activeSide = null;
 
-    rebuildAllCSG();
+    assignBrushToRegion(frame);
+    assignBrushToRegion(protoroom);
+    rebuildAffectedRegions([frame.id, protoroom.id]);
 }
 
 // ─── Brace Modal Tool ───────────────────────────────────────────────
@@ -880,17 +905,20 @@ export function confirmBracePlacement() {
     const schemeKey = (roomBrush && roomBrush.schemeKey) || 'facility_white_tile';
     const floorY    = (roomBrush && roomBrush.floorY)    ?? wall1.y;
 
+    const newBraceIds = [];
     for (const r of [wall1, ceiling, wall2]) {
         const b = new BrushDef(csg.nextBrushId++, 'add', r.x, r.y, r.z, r.w, r.h, r.d);
         b.isBrace = true;
         b.schemeKey = schemeKey;
         b.floorY = floorY;
         state.csg.brushes.push(b);
+        assignBrushToRegion(b);
+        newBraceIds.push(b.id);
     }
 
     csg.braceMode = false;
     csg.bracePreview = null;
-    rebuildAllCSG();
+    rebuildAffectedRegions(newBraceIds);
 }
 
 // ─── Pillar Modal Tool ──────────────────────────────────────────────
@@ -974,7 +1002,8 @@ export function confirmPillarPlacement() {
 
     csg.pillarMode = false;
     csg.pillarPreview = null;
-    rebuildAllCSG();
+    assignBrushToRegion(b);
+    rebuildAffectedRegions([b.id]);
 }
 
 // ─── Bake / Retexture / Delete ───────────────────────────────────────
@@ -1028,7 +1057,7 @@ export function retextureRoom(schemeKey) {
     // Stair-step click: just retexture that brush (floorY stays as-is).
     if (startBrush.isStairStep) {
         startBrush.schemeKey = schemeKey;
-        rebuildAllCSG();
+        rebuildAffectedRegions([startBrush.id]);
         return;
     }
 
@@ -1040,7 +1069,7 @@ export function retextureRoom(schemeKey) {
         b.floorY = roomFloorY;
     }
 
-    rebuildAllCSG();
+    rebuildAffectedRegions([...roomIds]);
 }
 
 // Delete the brush whose face is currently selected.
@@ -1059,3 +1088,4 @@ export function deleteSelectedBrush() {
 
     rebuildAllCSG();
 }
+

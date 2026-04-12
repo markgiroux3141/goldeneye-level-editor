@@ -190,10 +190,23 @@ export function updatePlatformPreview(camera) {
         const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes);
         if (anyHit) {
             const snapped = snapToWTGrid(anyHit.point);
-            const halfX = Math.floor(state.platformSizeX / 2);
-            const halfZ = Math.floor(state.platformSizeZ / 2);
+            let px = snapped.x - Math.floor(state.platformSizeX / 2);
+            let pz = snapped.z - Math.floor(state.platformSizeZ / 2);
+
+            // Snap edge to wall (match placement logic in indoorClick.js)
+            if (anyHit.type === 'csg' && anyHit.axis !== 'y') {
+                const camPos = camera.position;
+                if (anyHit.axis === 'x') {
+                    const wallX = snapped.x;
+                    px = (camPos.x / WORLD_SCALE > wallX) ? wallX : wallX - state.platformSizeX;
+                } else {
+                    const wallZ = snapped.z;
+                    pz = (camPos.z / WORLD_SCALE > wallZ) ? wallZ : wallZ - state.platformSizeZ;
+                }
+            }
+
             const pts = buildPlatformPreviewLines(
-                snapped.x - halfX, snapped.y, snapped.z - halfZ,
+                px, snapped.y, pz,
                 state.platformSizeX, state.platformSizeZ, state.platformThickness,
             );
             const positions = new Float32Array(pts);

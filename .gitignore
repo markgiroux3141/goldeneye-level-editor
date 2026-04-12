@@ -2,6 +2,7 @@
 Thumbs.db
 *.log
 node_modules/
+public/existing goldeneye levels/
 .vscode/
 *.swp
 *.swo

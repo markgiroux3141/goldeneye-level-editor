@@ -36,7 +36,7 @@ export function brushesTouching(a, b) {
 // Two brushes belong to the same region if they overlap *or* share a face.
 // Used for region clustering — note this is more permissive than brushesTouching
 // because additive brushes inside a room may overlap subtractive room brushes.
-function brushesOverlapOrTouch(a, b) {
+export function brushesOverlapOrTouch(a, b) {
     const axes = ['x', 'y', 'z'];
     const dims = ['w', 'h', 'd'];
     // Check for any overlap (inclusive of edge contact)

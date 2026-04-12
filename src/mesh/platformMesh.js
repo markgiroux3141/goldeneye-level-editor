@@ -48,7 +48,7 @@ export function rebuildPlatform(plat) {
         const connectedRuns = state.stairRuns.filter(
             r => r.fromPlatformId === plat.id || r.toPlatformId === plat.id
         );
-        const railGeo = buildPlatformRailingGeometry(plat, connectedRuns, state.csg.brushes);
+        const railGeo = buildPlatformRailingGeometry(plat, connectedRuns, state.csg.brushes, state.platforms);
         if (railGeo.getAttribute('position') && railGeo.getAttribute('position').count > 0) {
             const railMat = state.viewMode === 'textured' ? getRailingMaterial() : getRailingGridMaterial();
             const railMesh = new THREE.Mesh(railGeo, railMat);

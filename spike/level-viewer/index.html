@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>GoldenEye Level Viewer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; overflow: hidden; font-family: monospace; color: #ccc; }
+        canvas { display: block; }
+
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        #ui select, #ui button {
+            font-family: monospace;
+            font-size: 14px;
+            padding: 4px 8px;
+            background: #222;
+            color: #ccc;
+            border: 1px solid #555;
+            cursor: pointer;
+        }
+        #ui select:hover, #ui button:hover { border-color: #aaa; }
+
+        #mode-label {
+            font-size: 13px;
+            color: #888;
+        }
+
+        #loading {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            color: #fff;
+            z-index: 20;
+        }
+
+        #crosshair {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 12px;
+            height: 12px;
+            z-index: 5;
+            pointer-events: none;
+        }
+        #crosshair::before, #crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(0, 255, 0, 0.6);
+        }
+        #crosshair::before { width: 12px; height: 2px; top: 5px; left: 0; }
+        #crosshair::after  { width: 2px; height: 12px; top: 0; left: 5px; }
+
+        #lock-prompt {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 16px;
+            color: #aaa;
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        #speed-display {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 13px;
+            color: #888;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        #help {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            font-size: 12px;
+            color: #555;
+            z-index: 5;
+            pointer-events: none;
+        }
+    </style>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="ui">
+        <select id="level-select"></select>
+        <button id="toggle-mode">Textured</button>
+        <span id="mode-label">[C] to cycle</span>
+    </div>
+    <div id="loading">Loading...</div>
+    <div id="crosshair"></div>
+    <div id="lock-prompt">Click to enter</div>
+    <div id="speed-display"></div>
+    <div id="help">WASD: move &nbsp; Mouse: look &nbsp; Space: up &nbsp; Shift: sprint &nbsp; Scroll: speed &nbsp; C: cycle display mode</div>
+
+    <script type="module" src="./js/main.js"></script>
+</body>
+</html>
