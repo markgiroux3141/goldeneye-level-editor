@@ -19,6 +19,9 @@ export class BrushDef {
         this.isStairStep = false;
         this.stairAxis = null;         // 'x' | 'z' — wall normal axis being carved
         this.stairCarveSign = 0;       // +1 | -1 — sign of the riser face normal along stairAxis
+        // Stair void brush (single envelope brush for deferred stair system)
+        this.isStairVoid = false;
+        this.stairDescriptorId = null; // links to csgStairs[] entry
         this.schemeKey = 'facility_white_tile';
         this.floorY = y;               // WT-space anchor for wall texture vertical split
     }
@@ -49,6 +52,8 @@ export class BrushDef {
         b.isStairStep = this.isStairStep;
         b.stairAxis = this.stairAxis;
         b.stairCarveSign = this.stairCarveSign;
+        b.isStairVoid = this.isStairVoid;
+        b.stairDescriptorId = this.stairDescriptorId;
         b.schemeKey = this.schemeKey;
         b.floorY = this.floorY;
         return b;
@@ -69,6 +74,10 @@ export class BrushDef {
             j.stairAxis = this.stairAxis;
             j.stairCarveSign = this.stairCarveSign;
         }
+        if (this.isStairVoid) {
+            j.isStairVoid = true;
+            j.stairDescriptorId = this.stairDescriptorId;
+        }
         if (this.schemeKey !== 'facility_white_tile') j.schemeKey = this.schemeKey;
         if (this.floorY !== this.y) j.floorY = this.floorY;
         return j;
@@ -84,6 +93,10 @@ export class BrushDef {
             b.isStairStep = true;
             b.stairAxis = j.stairAxis;
             b.stairCarveSign = j.stairCarveSign;
+        }
+        if (j.isStairVoid) {
+            b.isStairVoid = true;
+            b.stairDescriptorId = j.stairDescriptorId;
         }
         if (j.schemeKey) b.schemeKey = j.schemeKey;
         if (j.floorY !== undefined) b.floorY = j.floorY;

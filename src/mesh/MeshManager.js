@@ -5,6 +5,7 @@ import { stairRunMeshes, rebuildAllStairRuns } from './stairRunMesh.js';
 import { rebuildAllTerrain } from './terrainMesh.js';
 import { lightMeshes, rebuildAllLights } from './lightMesh.js';
 import { csgRegionMeshes, rebuildAllCSG } from './csgMesh.js';
+import { csgStairMeshes, rebuildAllCsgStairs } from './csgStairMesh.js';
 
 // Re-export mesh Maps for external access (raycasting, previews, etc.)
 export { platformMeshes } from './platformMesh.js';
@@ -19,11 +20,13 @@ export { rebuildStairRun, rebuildAllStairRuns, rebuildConnectedStairRuns } from 
 export { rebuildTerrainMesh, rebuildTerrainWalls, rebuildAllTerrain, generateTerrainMesh } from './terrainMesh.js';
 export { rebuildLight, rebuildAllLights, removeLightMesh, updateLightSelection, getLightPickTargets, setRealtimePreview } from './lightMesh.js';
 export { rebuildAllCSG, rebuildAffectedRegions, removeCSGRegion } from './csgMesh.js';
+export { rebuildCsgStair, rebuildAllCsgStairs, removeCsgStairMesh, csgStairMeshes } from './csgStairMesh.js';
 
-// Rebuild everything (CSG + platforms + stair runs + terrain + lights) — used for undo/load
+// Rebuild everything (CSG + platforms + stair runs + terrain + lights + CSG stairs) — used for undo/load
 // CSG runs first so platform/stair placement raycasts can hit it.
 export function rebuildAll() {
     rebuildAllCSG();
+    rebuildAllCsgStairs();
     rebuildAllPlatforms();
     rebuildAllStairRuns();
     rebuildAllTerrain();
@@ -35,6 +38,7 @@ export function setIndoorMeshesVisible(visible) {
     for (const [, data] of csgRegionMeshes) data.mesh.visible = visible;
     for (const [, mesh] of platformMeshes) mesh.visible = visible;
     for (const [, mesh] of stairRunMeshes) mesh.visible = visible;
+    for (const [, mesh] of csgStairMeshes) mesh.visible = visible;
     for (const [, group] of lightMeshes) group.visible = visible;
 }
 
@@ -48,4 +52,5 @@ export function setAllWireframeVisible(visible) {
     for (const [, data] of csgRegionMeshes) setWireframe(data.mesh);
     for (const [, mesh] of platformMeshes) setWireframe(mesh);
     for (const [, mesh] of stairRunMeshes) setWireframe(mesh);
+    for (const [, mesh] of csgStairMeshes) setWireframe(mesh);
 }

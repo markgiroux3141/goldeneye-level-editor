@@ -211,3 +211,74 @@ export function updateCSGPillarPreview(camera) {
     pillarMesh = new THREE.Mesh(geo, braceMat);
     scene.add(pillarMesh);
 }
+
+// ─── CSG Stair Preview ─────────────────────────────────────────────
+// Shows translucent boxes for the two void brushes while pendingStairOp is active.
+
+let stairPreviewMeshes = [];
+let stairPreviewCount = -1;
+
+const stairVoidMat = new THREE.MeshBasicMaterial({
+    color: 0x44aaff, transparent: true, opacity: 0.2,
+    side: THREE.DoubleSide, depthTest: true,
+});
+const stairDestMat = new THREE.MeshBasicMaterial({
+    color: 0x44ff88, transparent: true, opacity: 0.3,
+    side: THREE.DoubleSide, depthTest: true,
+});
+
+function disposeStairPreview() {
+    for (const m of stairPreviewMeshes) disposeMesh(m);
+    stairPreviewMeshes = [];
+    stairPreviewCount = -1;
+}
+
+// Build a translucent box from WT-space bounds and add to scene.
+function addPreviewBox(axis, normalLo, normalHi, yMin, yMax, uLo, uHi, mat) {
+    const nw = (normalHi - normalLo) * WORLD_SCALE;
+    const vh = (yMax - yMin) * WORLD_SCALE;
+    const uw = (uHi - uLo) * WORLD_SCALE;
+    const geo = new THREE.BoxGeometry(
+        axis === 'x' ? nw : uw, vh, axis === 'x' ? uw : nw,
+    );
+    const cx = axis === 'x' ? (normalLo + normalHi) / 2 : (uLo + uHi) / 2;
+    const cy = (yMin + yMax) / 2;
+    const cz = axis === 'x' ? (uLo + uHi) / 2 : (normalLo + normalHi) / 2;
+    geo.translate(cx * WORLD_SCALE, cy * WORLD_SCALE, cz * WORLD_SCALE);
+    const mesh = new THREE.Mesh(geo, mat);
+    scene.add(mesh);
+    stairPreviewMeshes.push(mesh);
+}
+
+export function updateCSGStairPreview() {
+    const op = state.csg.pendingStairOp;
+    if (!op) {
+        if (stairPreviewMeshes.length) disposeStairPreview();
+        return;
+    }
+
+    if (op.stepCount === stairPreviewCount) return;
+    disposeStairPreview();
+    stairPreviewCount = op.stepCount;
+
+    const { axis, side, facePos, selU0, selU1, floor, H, direction, stepCount } = op;
+    const dir = side === 'max' ? 1 : -1;
+
+    // Brush 1: main stairwell (same math as confirmStairOp)
+    let b1nLo, b1nHi, b1yMin, b1yMax;
+    if (dir === 1) { b1nLo = facePos; b1nHi = facePos + stepCount; }
+    else           { b1nLo = facePos - stepCount; b1nHi = facePos; }
+    if (direction === 'down') { b1yMin = floor - stepCount; b1yMax = H; }
+    else                      { b1yMin = floor; b1yMax = H + stepCount; }
+
+    addPreviewBox(axis, b1nLo, b1nHi, b1yMin, b1yMax, selU0, selU1, stairVoidMat);
+
+    // Brush 2: destination corridor
+    let b2nLo, b2nHi, b2yMin, b2yMax;
+    if (dir === 1) { b2nLo = facePos + stepCount; b2nHi = facePos + stepCount + 1; }
+    else           { b2nLo = facePos - stepCount - 1; b2nHi = facePos - stepCount; }
+    if (direction === 'down') { b2yMin = floor - stepCount; b2yMax = H - stepCount; }
+    else                      { b2yMin = floor + stepCount; b2yMax = H + stepCount; }
+
+    addPreviewBox(axis, b2nLo, b2nHi, b2yMin, b2yMax, selU0, selU1, stairDestMat);
+}

@@ -130,6 +130,7 @@ export function selectFaceAtCrosshair(face) {
         state.csg.activeOp = null;
         state.csg.activeSide = null;
         state.csg.activeStairOp = null;
+        state.csg.pendingStairOp = null;
     }
 }
 
@@ -151,6 +152,7 @@ export function adjustSelectionSize(deltaU, deltaV) {
     state.csg.activeOp = null;
     state.csg.activeSide = null;
     state.csg.activeStairOp = null;
+    state.csg.pendingStairOp = null;
 }
 
 // Adjust brace dimensions before placement (scroll wheel in brace mode).
@@ -431,16 +433,6 @@ function isFullVerticalSelection() {
     return selSizeV <= 0 || selSizeV >= info.vSize;
 }
 
-// Compare two face descriptors for stair-op anchoring.
-function stairAnchorMatches(a, b) {
-    if (!a || !b) return false;
-    return a.regionId === b.regionId
-        && a.brushId === b.brushId
-        && a.axis === b.axis
-        && a.side === b.side
-        && a.position === b.position;
-}
-
 // Remove brushes by id from the global brush list and region tracking. No rebuild — caller does it.
 function removeBrushesByIds(ids) {
     if (!ids || ids.length === 0) return;
@@ -449,109 +441,16 @@ function removeBrushesByIds(ids) {
     for (const id of ids) removeBrushFromRegion(id);
 }
 
-// Build N subtractive brushes that carve a staircase into the selected wall.
-// Returns the array of new brush ids (in step order, k = 0..N-1).
-//
-// Inputs (resolved up-front by the caller):
-//   axis     — 'x' or 'z' (the wall normal axis)
-//   side     — 'min' or 'max'
-//   facePos  — wall position along the normal axis (WT)
-//   selU0/U1 — span along the wall length (WT) — already snapped via ensureSelectionBounds
-//   floor/H  — face V bounds (WT) — full face height required
-//   direction — 'down' or 'up'
-//   stepCount — N >= 1
-//   anchorBrush — the brush owning the selected wall (or null for baked faces).
-//                 Its schemeKey + floorY are copied onto every stair brush so
-//                 (a) textures match the room and (b) wall UVs flow continuously
-//                 across the stair area instead of stepping per column.
-function createStairBrushes({ axis, side, facePos, selU0, selU1, floor, H, direction, stepCount, anchorBrush }) {
-    const csg = state.csg;
-    const dir = side === 'max' ? 1 : -1;
-    const newIds = [];
-
-    // Inherit the room's texture scheme. Fall back for baked faces.
-    const inheritedScheme = anchorBrush ? anchorBrush.schemeKey : 'facility_white_tile';
-    // All stair brushes share a single floorY so the wall texture transitions
-    // cleanly once rather than stepping at every column. Anchor to the
-    // DESTINATION floor (bottom for down, top for up) — this gives the stair
-    // area walls the same trim height as the corridor they lead into.
-    const destinationFloor = direction === 'down' ? (floor - stepCount) : (floor + stepCount);
-    const inheritedFloorY = destinationFloor;
-
-    // Burial epsilon: the first brush (k=0) sits at the original wall plane,
-    // which is coplanar with the remaining wall on either side of a sub-face
-    // stair. This causes CSG artifacts. Extend the first brush's inner edge
-    // half a WT into the wall material (same technique as braces/pillars) so
-    // the coplanar face is hidden inside solid.
-    const E = WALL_THICKNESS / 2;
-
-    for (let k = 0; k < stepCount; k++) {
-        // Normal-axis span: 1 WT deep, abutting the previous brush.
-        let normalLo, normalHi;
-        if (dir === 1) {
-            normalLo = facePos + k - (k === 0 ? E : 0);
-            normalHi = facePos + k + 1;
-        } else {
-            normalLo = facePos - (k + 1);
-            normalHi = facePos - k + (k === 0 ? E : 0);
-        }
-
-        // Vertical (Y) span depends on direction.
-        let yMin, yMax;
-        if (direction === 'down') {
-            // Floor steps down by k+1; ceiling stays at H, except the deepest
-            // column (k === stepCount - 1) which drops to H - stepCount.
-            yMin = floor - (k + 1);
-            yMax = (k === stepCount - 1) ? (H - stepCount) : H;
-        } else {
-            // Up: floor steps up by k+1; ceiling raised to H + stepCount across
-            // the whole alcove (head clearance).
-            yMin = floor + (k + 1);
-            yMax = H + stepCount;
-        }
-
-        // Build the brush. U axis depends on wall axis.
-        let nx, ny, nz, nw, nh, nd;
-        ny = yMin;
-        nh = yMax - yMin;
-        if (axis === 'x') {
-            nx = normalLo;
-            nw = normalHi - normalLo;
-            nz = selU0;
-            nd = selU1 - selU0;
-        } else { // axis === 'z'
-            nz = normalLo;
-            nd = normalHi - normalLo;
-            nx = selU0;
-            nw = selU1 - selU0;
-        }
-
-        const brush = new BrushDef(csg.nextBrushId++, 'subtract', nx, ny, nz, nw, nh, nd);
-        // Mark as stair step so uvZones can route the riser face to zone 5.
-        // The riser normal direction flips between up and down stairs:
-        //   DOWN: solid is behind (shallower col), void is ahead → normal = +dir
-        //   UP:   solid is ahead (deeper col), void is behind   → normal = -dir
-        //
-        // For UP stairs, the deepest brush (k=N-1) has NO riser — only the
-        // back wall — and that wall shares the same normal direction as risers.
-        // Skip isStairStep on it so the back wall doesn't get zone 5.
-        brush.isStairStep = !(direction === 'up' && k === stepCount - 1);
-        brush.stairAxis = axis;
-        brush.stairCarveSign = direction === 'down' ? dir : -dir;
-        // Inherit room scheme + floorY so wall texture flows continuously
-        // across the stair area (instead of jumping at each per-brush UV origin).
-        brush.schemeKey = inheritedScheme;
-        brush.floorY = inheritedFloorY;
-        csg.brushes.push(brush);
-        newIds.push(brush.id);
-    }
-
-    return newIds;
-}
-
 // Cancel an active stair op: remove all brushes it created, clear tracking.
+// (Legacy path — kept for old activeStairOp in-flight during undo.)
 export function cancelStairOp() {
     const csg = state.csg;
+    // New deferred path
+    if (csg.pendingStairOp) {
+        csg.pendingStairOp = null;
+        return;
+    }
+    // Legacy path
     if (!csg.activeStairOp) return;
     removeBrushesByIds(csg.activeStairOp.brushIds);
     csg.activeStairOp = null;
@@ -559,8 +458,8 @@ export function cancelStairOp() {
 }
 
 // Main entry: arrow-key handler. direction = 'down' | 'up'.
-// Each press grows the active stair op by one step (or starts a new one).
-// Pressing the opposite direction shrinks the active op (and cancels at 0).
+// Each press adjusts the pending stair counter (no brushes created yet).
+// Press Enter to confirm, Escape to cancel.
 export function pushSelectedFaceAsStairs(direction) {
     const csg = state.csg;
     const sel = csg.selectedFace;
@@ -570,9 +469,7 @@ export function pushSelectedFaceAsStairs(direction) {
 
     ensureSelectionBounds();
 
-    // Resolve face V bounds (floor / ceiling of the wall face) and the
-    // anchor brush (for inheriting schemeKey + floorY so the stair area's
-    // wall texture flows continuously with the room).
+    // Resolve face V bounds and anchor brush for texture inheritance.
     let info;
     let anchorBrush = null;
     if (sel.brushId === 0) {
@@ -588,28 +485,35 @@ export function pushSelectedFaceAsStairs(direction) {
     const H = info.vMax;
     const facePos = sel.position;
 
-    // Decide new step count based on existing op (if any).
+    // Inherit texture scheme from anchor brush
+    const schemeKey = anchorBrush ? anchorBrush.schemeKey : 'facility_white_tile';
+
+    // Decide new step count based on existing pending op (if any).
     let newCount;
-    const op = csg.activeStairOp;
-    const sameAnchor = op && stairAnchorMatches(op.anchorFace, sel)
-        && op.selU0 === csg.selU0 && op.selU1 === csg.selU1;
+    const op = csg.pendingStairOp;
+    const sameAnchor = op
+        && op.axis === sel.axis && op.side === sel.side && op.facePos === facePos
+        && op.selU0 === csg.selU0 && op.selU1 === csg.selU1
+        && op.regionId === sel.regionId;
 
     if (sameAnchor && op.direction === direction) {
         newCount = op.stepCount + 1;
     } else if (sameAnchor && op.direction !== direction) {
         newCount = op.stepCount - 1;
         if (newCount <= 0) {
-            cancelStairOp();
+            csg.pendingStairOp = null;
             return;
         }
     } else {
         newCount = 1;
     }
 
-    // Wipe the previous build (if any) and rebuild from scratch with newCount.
-    if (op) removeBrushesByIds(op.brushIds);
+    // Update floorY based on final step count
+    const finalDestFloor = direction === 'down' ? (floor - newCount) : (floor + newCount);
 
-    const newIds = createStairBrushes({
+    csg.pendingStairOp = {
+        direction,
+        stepCount: newCount,
         axis: sel.axis,
         side: sel.side,
         facePos,
@@ -617,40 +521,146 @@ export function pushSelectedFaceAsStairs(direction) {
         selU1: csg.selU1,
         floor,
         H,
-        direction,
-        stepCount: newCount,
-        anchorBrush,
-    });
-
-    csg.activeStairOp = {
-        brushIds: newIds,
-        direction,
-        stepCount: newCount,
-        anchorFace: { ...sel },
-        selU0: csg.selU0,
-        selU1: csg.selU1,
+        anchorBrushId: anchorBrush ? anchorBrush.id : null,
+        regionId: sel.regionId,
+        schemeKey,
+        floorY: finalDestFloor,
     };
+    // No CSG rebuild — preview is rendered separately in csgPreviews.js
+}
 
-    // Register new stair brushes directly in the known region (skip O(n) overlap scan).
-    // We already know the region from the selected face — no need to test overlap.
-    const regionData = csgRegionMeshes.get(sel.regionId);
-    if (regionData && regionData.region) {
-        const brushById = new Map(state.csg.brushes.map(b => [b.id, b]));
-        for (const nid of newIds) {
-            const nb = brushById.get(nid);
-            if (nb) regionData.region.brushes.push(nb);
-            assignBrushToRegionDirect(nid, sel.regionId);
-        }
+// Confirm a pending stair op: create two void brushes + register stair descriptor.
+//
+// DOWN stairs (2 brushes):
+//   Brush 1 (stairwell): full staircase length, floor drops by stepCount, ceiling = H
+//   Brush 2 (destination): 1 WT deep at the far end, same low floor, ceiling = H - stepCount
+//
+// UP stairs (2 brushes):
+//   Brush 1 (stairwell): full staircase length, floor = original, ceiling = H + stepCount
+//   Brush 2 (destination): 1 WT deep at the far end, same raised ceiling, floor = floor + stepCount
+//
+export function confirmStairOp() {
+    const csg = state.csg;
+    const op = csg.pendingStairOp;
+    if (!op) return;
+
+    const { axis, side, facePos, selU0, selU1, floor, H, direction, stepCount, schemeKey, floorY, regionId } = op;
+    const dir = side === 'max' ? 1 : -1;
+
+    // ── Brush 1: main stairwell ──────────────────────────────────────
+    // Starts flush at the wall face — no burial epsilon. If coplanar CSG
+    // artifacts appear on sub-face stairs, we can revisit.
+    let b1_normalLo, b1_normalHi, b1_yMin, b1_yMax;
+    if (dir === 1) {
+        b1_normalLo = facePos;
+        b1_normalHi = facePos + stepCount;
     } else {
-        for (const nid of newIds) {
-            const nb = state.csg.brushes.find(b => b.id === nid);
-            if (nb) assignBrushToRegion(nb);
+        b1_normalLo = facePos - stepCount;
+        b1_normalHi = facePos;
+    }
+    if (direction === 'down') {
+        b1_yMin = floor - stepCount;
+        b1_yMax = H;
+    } else {
+        b1_yMin = floor;
+        b1_yMax = H + stepCount;
+    }
+
+    const brush1 = makeBrush(axis, b1_normalLo, b1_normalHi, b1_yMin, b1_yMax, selU0, selU1);
+    brush1.isStairVoid = true;
+    brush1.schemeKey = schemeKey;
+    brush1.floorY = floorY;
+
+    // ── Brush 2: destination corridor ────────────────────────────────
+    // 1 WT deep at the far end of the stairwell
+    let b2_normalLo, b2_normalHi, b2_yMin, b2_yMax;
+    if (dir === 1) {
+        b2_normalLo = facePos + stepCount;
+        b2_normalHi = facePos + stepCount + 1;
+    } else {
+        b2_normalLo = facePos - stepCount - 1;
+        b2_normalHi = facePos - stepCount;
+    }
+    if (direction === 'down') {
+        b2_yMin = floor - stepCount;
+        b2_yMax = H - stepCount;       // ceiling drops by stepCount
+    } else {
+        b2_yMin = floor + stepCount;    // floor raises to top of stairs
+        b2_yMax = H + stepCount;
+    }
+
+    const brush2 = makeBrush(axis, b2_normalLo, b2_normalHi, b2_yMin, b2_yMax, selU0, selU1);
+    brush2.isStairVoid = true;
+    brush2.schemeKey = schemeKey;
+    brush2.floorY = floorY;
+
+    // Register stair descriptor
+    const stairId = csg.nextCsgStairId++;
+    brush1.stairDescriptorId = stairId;
+    brush2.stairDescriptorId = stairId;
+
+    const descriptor = {
+        id: stairId,
+        voidBrushIds: [brush1.id, brush2.id],
+        direction, stepCount, axis, side,
+        facePos, selU0, selU1, floor, H,
+        schemeKey, floorY,
+    };
+    csg.csgStairs.push(descriptor);
+
+    // Add brushes to scene
+    const newIds = [brush1.id, brush2.id];
+    csg.brushes.push(brush1, brush2);
+
+    // Register in region
+    const regionData = csgRegionMeshes.get(regionId);
+    for (const brush of [brush1, brush2]) {
+        if (regionData && regionData.region) {
+            regionData.region.brushes.push(brush);
+            assignBrushToRegionDirect(brush.id, regionId);
+        } else {
+            assignBrushToRegion(brush);
         }
     }
 
-    // Keep the visible selection pinned to the original wall plane so
-    // subsequent presses keep finding the same active op.
+    // Clear pending op
+    csg.pendingStairOp = null;
+
+    // Rebuild CSG
     rebuildAffectedRegions(newIds);
+
+    return descriptor;
+}
+
+// Helper: build a subtractive BrushDef from normal-axis lo/hi, Y lo/hi, U lo/hi.
+function makeBrush(axis, normalLo, normalHi, yMin, yMax, uLo, uHi) {
+    const csg = state.csg;
+    let nx, ny, nz, nw, nh, nd;
+    ny = yMin;
+    nh = yMax - yMin;
+    if (axis === 'x') {
+        nx = normalLo;
+        nw = normalHi - normalLo;
+        nz = uLo;
+        nd = uHi - uLo;
+    } else {
+        nz = normalLo;
+        nd = normalHi - normalLo;
+        nx = uLo;
+        nw = uHi - uLo;
+    }
+    return new BrushDef(csg.nextBrushId++, 'subtract', nx, ny, nz, nw, nh, nd);
+}
+
+// Delete a confirmed CSG stair by descriptor id: remove void brushes + descriptor.
+export function deleteCsgStair(stairId) {
+    const csg = state.csg;
+    const idx = csg.csgStairs.findIndex(s => s.id === stairId);
+    if (idx < 0) return;
+    const desc = csg.csgStairs[idx];
+    removeBrushesByIds(desc.voidBrushIds || [desc.voidBrushId]);
+    csg.csgStairs.splice(idx, 1);
+    rebuildAllCSG();
 }
 
 export function scaleSelectedFace(deltaU, deltaV) {

@@ -34,6 +34,11 @@ export const state = {
         activeSide: null,       // 'min' | 'max' — original face side
         // Active stair-extrude tracking (Arrow keys on a wall face)
         activeStairOp: null,    // { brushIds: number[], direction: 'down'|'up', stepCount, anchorFace, selU0, selU1 }
+        // Deferred stair op: arrow keys adjust counter, Enter confirms
+        pendingStairOp: null,   // { direction, stepCount, axis, side, facePos, selU0, selU1, floor, H, anchorBrushId, regionId, schemeKey, floorY }
+        // Confirmed CSG stairs (void brush + visual mesh descriptors)
+        csgStairs: [],          // { id, voidBrushId, direction, stepCount, axis, side, facePos, selU0, selU1, floor, H, schemeKey, floorY }
+        nextCsgStairId: 1,
         // Hole/door modal tool state
         holeMode: false,
         holeDoor: false,
@@ -124,6 +129,8 @@ export function saveUndoState() {
         csgBrushes: state.csg.brushes.map(b => b.toJSON()),
         nextBrushId: state.csg.nextBrushId,
         totalBakedBrushes: state.csg.totalBakedBrushes,
+        csgStairs: state.csg.csgStairs,
+        nextCsgStairId: state.csg.nextCsgStairId,
     });
     state.undoStack.push(snapshot);
     if (state.undoStack.length > state.maxUndo) state.undoStack.shift();
@@ -145,11 +152,14 @@ export function undo() {
     state.csg.brushes = (snapshot.csgBrushes || []).map(j => BrushDef.fromJSON(j));
     state.csg.nextBrushId = snapshot.nextBrushId || (Math.max(...state.csg.brushes.map(b => b.id), 0) + 1);
     state.csg.totalBakedBrushes = snapshot.totalBakedBrushes || 0;
+    state.csg.csgStairs = snapshot.csgStairs || [];
+    state.csg.nextCsgStairId = snapshot.nextCsgStairId || (Math.max(...state.csg.csgStairs.map(s => s.id), 0) + 1);
     state.csg.selectedFace = null;
     state.csg.activeBrush = null;
     state.csg.activeOp = null;
     state.csg.activeSide = null;
     state.csg.activeStairOp = null;
+    state.csg.pendingStairOp = null;
     state.nextPlatformId = Math.max(...state.platforms.map(p => p.id), 0) + 1;
     state.nextStairRunId = Math.max(...state.stairRuns.map(r => r.id), 0) + 1;
     state.nextTerrainMapId = Math.max(...state.terrainMaps.map(t => t.id), 0) + 1;
@@ -171,6 +181,8 @@ export function serializeLevel() {
         csgBrushes: state.csg.brushes.map(b => b.toJSON()),
         nextBrushId: state.csg.nextBrushId,
         totalBakedBrushes: state.csg.totalBakedBrushes,
+        csgStairs: state.csg.csgStairs,
+        nextCsgStairId: state.csg.nextCsgStairId,
         nextPlatformId: state.nextPlatformId,
         nextStairRunId: state.nextStairRunId,
         nextTerrainMapId: state.nextTerrainMapId,
@@ -190,11 +202,14 @@ export function deserializeLevel(json) {
     state.csg.brushes = (data.csgBrushes || []).map(j => BrushDef.fromJSON(j));
     state.csg.nextBrushId = data.nextBrushId || (Math.max(...state.csg.brushes.map(b => b.id), 0) + 1);
     state.csg.totalBakedBrushes = data.totalBakedBrushes || 0;
+    state.csg.csgStairs = data.csgStairs || [];
+    state.csg.nextCsgStairId = data.nextCsgStairId || (Math.max(...state.csg.csgStairs.map(s => s.id), 0) + 1);
     state.csg.selectedFace = null;
     state.csg.activeBrush = null;
     state.csg.activeOp = null;
     state.csg.activeSide = null;
     state.csg.activeStairOp = null;
+    state.csg.pendingStairOp = null;
     state.nextPlatformId = data.nextPlatformId || (Math.max(...state.platforms.map(p => p.id), 0) + 1);
     state.nextStairRunId = data.nextStairRunId || (Math.max(...state.stairRuns.map(r => r.id), 0) + 1);
     state.nextTerrainMapId = data.nextTerrainMapId || (Math.max(...state.terrainMaps.map(t => t.id), 0) + 1);

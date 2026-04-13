@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Shadow Lighting Spike</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #1a1a1a; overflow: hidden; font-family: monospace; color: #ccc; }
+        canvas { display: block; }
+
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        button {
+            font-family: monospace;
+            font-size: 13px;
+            padding: 5px 10px;
+            background: #333;
+            color: #ccc;
+            border: 1px solid #555;
+            cursor: pointer;
+        }
+        button:hover { border-color: #aaa; }
+        button.active { background: #558; border-color: #88f; color: #fff; }
+
+        #stats {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            z-index: 10;
+            font-size: 13px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 12px;
+            border: 1px solid #444;
+        }
+
+        #info {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 10;
+            font-size: 12px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 12px;
+            border: 1px solid #444;
+            max-width: 250px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div class="row">
+            <button id="btn-none" class="active">No Subdiv</button>
+            <button id="btn-uniform">Uniform 2x2</button>
+            <button id="btn-adaptive">Adaptive</button>
+            <button id="btn-stencil">Stencil + Adaptive</button>
+        </div>
+        <div class="row">
+            <button id="btn-wireframe">Wireframe</button>
+            <button id="btn-light1">Light 1</button>
+            <button id="btn-light2">Light 2</button>
+        </div>
+    </div>
+
+    <div id="stats">
+        Triangles: <span id="tri-count">0</span><br>
+        Bake time: <span id="bake-time">0</span> ms
+    </div>
+
+    <div id="info">
+        Orbit: left-drag<br>
+        Pan: right-drag<br>
+        Zoom: scroll
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>

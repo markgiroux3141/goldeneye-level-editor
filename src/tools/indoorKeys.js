@@ -11,6 +11,7 @@ import {
     saveLevel, loadLevel,
 } from '../actions.js';
 import * as csgActions from '../csg/csgActions.js';
+import { rebuildCsgStair } from '../mesh/csgStairMesh.js';
 import {
     stairRunMeshes,
     rebuildPlatform, rebuildStairRun, rebuildConnectedStairRuns,
@@ -104,17 +105,34 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             csgActions.pullSelectedFace();
             return;
         }
-        // Arrow keys: push wall + carve stairs
+        // Arrow keys: adjust pending stair counter (no CSG rebuild yet)
         if (hotkeyManager.matches('stair_down', e)) {
             e.preventDefault();
-            saveUndoState();
             csgActions.pushSelectedFaceAsStairs('down');
+            if (state.csg.pendingStairOp) {
+                const op = state.csg.pendingStairOp;
+                showMessage(`Stairs: ${op.stepCount} step${op.stepCount > 1 ? 's' : ''} ${op.direction} \u2014 Enter to confirm, Esc to cancel`);
+            }
             return;
         }
         if (hotkeyManager.matches('stair_up', e)) {
             e.preventDefault();
-            saveUndoState();
             csgActions.pushSelectedFaceAsStairs('up');
+            if (state.csg.pendingStairOp) {
+                const op = state.csg.pendingStairOp;
+                showMessage(`Stairs: ${op.stepCount} step${op.stepCount > 1 ? 's' : ''} ${op.direction} \u2014 Enter to confirm, Esc to cancel`);
+            }
+            return;
+        }
+        // Enter: confirm pending stair op
+        if (e.code === 'Enter' && state.csg.pendingStairOp) {
+            e.preventDefault();
+            saveUndoState();
+            const desc = csgActions.confirmStairOp();
+            if (desc) {
+                rebuildCsgStair(desc);
+                showMessage(`Stairs confirmed: ${desc.stepCount} steps ${desc.direction}`);
+            }
             return;
         }
         // E = extrude selected face
@@ -170,10 +188,13 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             csgActions.deleteSelectedBrush();
             return;
         }
-        // Escape = cancel hole/brace mode or deselect
+        // Escape = cancel pending stair / hole / brace mode or deselect
         if (hotkeyManager.matches('escape', e)) {
             e.preventDefault();
-            if (state.csg.holeMode) {
+            if (state.csg.pendingStairOp) {
+                csgActions.cancelStairOp();
+                showMessage('Stair cancelled');
+            } else if (state.csg.holeMode) {
                 csgActions.exitHoleMode();
                 showMessage('Hole mode cancelled');
             } else if (state.csg.braceMode) {
