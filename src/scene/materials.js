@@ -43,8 +43,12 @@ export function initMaterials() {
     floorTex = createCanvasTexture('#6b6b4e', '#636346', '#5a5a42');
     ceilingTex = createCanvasTexture('#909090', '#888888', '#777777');
     highlightTex = createCanvasTexture('#44aa44', '#55bb55', '#33aa33');
+}
 
-    // Collect all unique texture names from all schemes
+// Kick off BMP texture loads. Returns a promise that resolves when all
+// textures (including the railing alpha-keyed one) have populated textureMap.
+// Deferred from initMaterials() so it doesn't block first paint.
+export function loadBmpTextures() {
     const textureNames = new Set();
     for (const scheme of Object.values(TEXTURE_SCHEMES)) {
         for (const zone of Object.values(scheme.zones)) {
@@ -52,40 +56,45 @@ export function initMaterials() {
         }
     }
 
-    // Load all textures
     const loader = new THREE.TextureLoader();
-    for (const name of textureNames) {
-        const tex = loader.load(`public/textures/${name}.bmp`);
-        tex.wrapS = THREE.RepeatWrapping;
-        tex.wrapT = THREE.RepeatWrapping;
-        tex.magFilter = THREE.NearestFilter;
-        tex.minFilter = THREE.NearestMipMapLinearFilter;
-        textureMap.set(name, tex);
-    }
-
-    // Load transparent textures — convert black pixels to alpha=0
-    loader.load('public/transparent_textures/railing.bmp', (tex) => {
-        const img = tex.image;
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-        for (let i = 0; i < data.length; i += 4) {
-            if (data[i] < 10 && data[i + 1] < 10 && data[i + 2] < 10) {
-                data[i + 3] = 0;
-            }
-        }
-        ctx.putImageData(imageData, 0, 0);
-        const rgbaTex = new THREE.CanvasTexture(canvas);
-        rgbaTex.wrapS = THREE.RepeatWrapping;
-        rgbaTex.wrapT = THREE.RepeatWrapping;
-        rgbaTex.magFilter = THREE.NearestFilter;
-        rgbaTex.minFilter = THREE.NearestMipMapLinearFilter;
-        textureMap.set('railing', rgbaTex);
+    const loadOne = (name) => new Promise((resolve) => {
+        loader.load(`public/textures/${name}.bmp`, (tex) => {
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.RepeatWrapping;
+            tex.magFilter = THREE.NearestFilter;
+            tex.minFilter = THREE.NearestMipMapLinearFilter;
+            textureMap.set(name, tex);
+            resolve();
+        }, undefined, () => resolve());
     });
+
+    const railingPromise = new Promise((resolve) => {
+        loader.load('public/transparent_textures/railing.bmp', (tex) => {
+            const img = tex.image;
+            const canvas = document.createElement('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imageData.data;
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i] < 10 && data[i + 1] < 10 && data[i + 2] < 10) {
+                    data[i + 3] = 0;
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+            const rgbaTex = new THREE.CanvasTexture(canvas);
+            rgbaTex.wrapS = THREE.RepeatWrapping;
+            rgbaTex.wrapT = THREE.RepeatWrapping;
+            rgbaTex.magFilter = THREE.NearestFilter;
+            rgbaTex.minFilter = THREE.NearestMipMapLinearFilter;
+            textureMap.set('railing', rgbaTex);
+            resolve();
+        }, undefined, () => resolve());
+    });
+
+    return Promise.all([...[...textureNames].map(loadOne), railingPromise]);
 }
 
 export function getWallMaterial() {

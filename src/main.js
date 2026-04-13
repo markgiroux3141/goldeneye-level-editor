@@ -6,7 +6,7 @@ import { initInput, initKeyActions, onKeyDown, isKeyDown, isPointerLocked, consu
 import { updateCamera } from './scene/camera.js';
 import { WORLD_SCALE } from './core/constants.js';
 import { state, deserializeLevel } from './state.js';
-import { initMaterials } from './scene/materials.js';
+import { initMaterials, loadBmpTextures, clearCSGMaterialCache } from './scene/materials.js';
 import { loadTextureSchemes } from './scene/textureSchemes.js';
 import { showMessage, updateHUD, initHUD } from './hud/hud.js';
 import { loadFromLocalStorage } from './io/LevelStorage.js';
@@ -26,7 +26,6 @@ import { updateCSGSelectionPreview, updateCSGHolePreview, updateCSGBracePreview,
 import * as csgActions from './csg/csgActions.js';
 import { updateTerrainHUD } from './hud/terrainHud.js';
 import { initToolManager, toggleEditorMode, getActiveTerrain } from './tools/ToolManager.js';
-import { bakeAllLighting, clearBakedLighting } from './lighting/lightBaker.js';
 import { handleIndoorClick } from './tools/indoorClick.js';
 import { handleTerrainClick, handleTerrainMouseUp, handleTerrainMouseMove, handleTerrainWheel, getIsSculpting } from './tools/terrainClick.js';
 import { handleIndoorKey } from './tools/indoorKeys.js';
@@ -36,15 +35,20 @@ import { initCSGWasm } from './core/csg/wasmCSG.js';
 // ============================================================
 // INIT
 // ============================================================
+const __bootT = { start: performance.now() };
+const __mark = (label) => { __bootT[label] = performance.now(); };
+
 initScene();
 initInput(renderer.domElement);
 initKeyActions();
 initHUD();
+__mark('sceneInputHud');
 
 // Platform gizmo (move arrows + scale handles)
 const gizmo = new PlatformGizmo(scene);
 
 initToolManager(gizmo, camera);
+__mark('gizmoToolMgr');
 
 // Radial menu setup
 const radialMenu = new RadialMenu();
@@ -134,19 +138,23 @@ onKeyDown((e) => {
 // INIT — load schemes, then start
 // ============================================================
 (async () => {
-    await initCSGWasm();
-    await loadTextureSchemes();
+    await Promise.all([initCSGWasm(), loadTextureSchemes()]);
+    __mark('wasmAndSchemes');
     initMaterials();
+    __mark('initMaterials');
 
-    // Wire radial menu actions to editor operations
+    // Wire radial menu actions to editor operations.
+    // lightBaker is loaded lazily on first use to keep boot lean.
     initMenuActions({
         showMessage,
         rebuildAll,
-        bakeLighting: () => {
+        bakeLighting: async () => {
+            const { bakeAllLighting } = await import('./lighting/lightBaker.js');
             const elapsed = bakeAllLighting(32);
             showMessage(`Baked lighting in ${elapsed}s (${state.pointLights.length} lights)`);
         },
-        clearBake: () => {
+        clearBake: async () => {
+            const { clearBakedLighting } = await import('./lighting/lightBaker.js');
             clearBakedLighting();
             showMessage('Baked lighting cleared');
         },
@@ -283,6 +291,38 @@ onKeyDown((e) => {
     }
 
     animate();
+    __mark('boot_done');
+
+    // Boot timing summary. __bootT.start is captured at top of main.js
+    // (after browser finished downloading + parsing the entire module graph),
+    // so its value = time from page navigation to main.js execution start.
+    const phases = [
+        ['module download + parse', __bootT.start],
+        ['scene + input + hud',     __bootT.sceneInputHud - __bootT.start],
+        ['gizmo + toolMgr',         __bootT.gizmoToolMgr - __bootT.sceneInputHud],
+        ['wasm + schemes',          __bootT.wasmAndSchemes - __bootT.gizmoToolMgr],
+        ['initMaterials',           __bootT.initMaterials - __bootT.wasmAndSchemes],
+        ['menus + load + rebuild',  __bootT.boot_done - __bootT.initMaterials],
+        ['TOTAL to interactive',    __bootT.boot_done],
+    ];
+    console.table(phases.map(([phase, ms]) => ({ phase, ms: +ms.toFixed(1) })));
+
+    // Defer BMP texture loads off the critical path. Once they finish,
+    // clear the CSG material cache and rebuild so any meshes that were
+    // built with magenta-fallback materials get the real textures.
+    const deferBmpLoad = () => {
+        const t0 = performance.now();
+        loadBmpTextures().then(() => {
+            clearCSGMaterialCache();
+            rebuildAll();
+            console.log(`[boot] BMP textures loaded in ${(performance.now() - t0).toFixed(1)}ms`);
+        });
+    };
+    if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(deferBmpLoad, { timeout: 1000 });
+    } else {
+        setTimeout(deferBmpLoad, 0);
+    }
 })();
 
 // ============================================================
