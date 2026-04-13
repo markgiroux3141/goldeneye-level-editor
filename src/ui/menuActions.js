@@ -8,6 +8,7 @@ import { gridHelper } from '../scene/setup.js';
 import { setTool } from '../tools/ToolManager.js';
 import { setHoleMode } from '../csg/csgActions.js';
 import { PLATFORM_STYLES } from '../geometry/platformStyles.js';
+import { exportSceneToGLB } from '../io/GLBExporter.js';
 
 // Callbacks set during init to avoid circular imports with main.js
 let callbacks = {};
@@ -26,6 +27,9 @@ export function initMenuActions(cbs) {
             handleLightingAction(actionId.slice(9));
         } else if (actionId.startsWith('platform_style:')) {
             handlePlatformStyleAction(actionId.slice(15));
+        } else if (actionId === 'file:export_glb') {
+            exportSceneToGLB();
+            callbacks.showMessage('Exported level.glb');
         }
     });
 }

@@ -7,6 +7,7 @@ import { gridHelper } from '../scene/setup.js';
 import { hotkeyManager } from '../input/HotkeyManager.js';
 import { MIN_BRUSH_RADIUS, MAX_BRUSH_RADIUS, MIN_BRUSH_STRENGTH, MAX_BRUSH_STRENGTH, MIN_SUBDIVISION, MAX_SUBDIVISION } from '../core/constants.js';
 import { undoAction, saveLevel, loadLevel } from '../actions.js';
+import { exportSceneToGLB } from '../io/GLBExporter.js';
 import { rebuildTerrainWalls, terrainMeshes } from '../mesh/MeshManager.js';
 import {
     toggleEditorMode, cycleTerrainTool, toggleTerrainCamera,
@@ -157,6 +158,12 @@ export function handleTerrainKey(e, { generateTerrainMesh, rebuildAll }) {
     if (e.ctrlKey && e.code === 'KeyO') {
         e.preventDefault();
         loadLevel(showMessage, rebuildAll);
+        return;
+    }
+    if (hotkeyManager.matches('export_glb', e)) {
+        e.preventDefault();
+        exportSceneToGLB();
+        showMessage('Exported level.glb');
         return;
     }
 

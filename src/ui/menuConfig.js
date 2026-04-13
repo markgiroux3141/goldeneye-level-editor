@@ -45,6 +45,12 @@ export function buildMenuTree() {
             ],
         },
         {
+            label: 'File',
+            children: [
+                { label: 'Export GLB', action: 'file:export_glb', hotkey: hotkeyManager.getDisplayKey('export_glb'), hotkeyAction: 'export_glb' },
+            ],
+        },
+        {
             label: 'Settings',
             children: [
                 { label: 'Rebind Keys', action: 'open:rebind' },

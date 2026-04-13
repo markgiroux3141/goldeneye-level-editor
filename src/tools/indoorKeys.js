@@ -10,6 +10,7 @@ import {
     undoAction,
     saveLevel, loadLevel,
 } from '../actions.js';
+import { exportSceneToGLB } from '../io/GLBExporter.js';
 import * as csgActions from '../csg/csgActions.js';
 import { rebuildCsgStair } from '../mesh/csgStairMesh.js';
 import {
@@ -439,6 +440,13 @@ export function handleIndoorKey(e, { gizmo, camera }) {
     if (hotkeyManager.matches('load', e)) {
         e.preventDefault();
         loadLevel(showMessage, rebuildAll);
+        return;
+    }
+
+    if (hotkeyManager.matches('export_glb', e)) {
+        e.preventDefault();
+        exportSceneToGLB();
+        showMessage('Exported level.glb');
         return;
     }
 }
