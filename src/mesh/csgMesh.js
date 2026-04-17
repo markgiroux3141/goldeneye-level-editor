@@ -81,15 +81,16 @@ function scheduleEdgesUpdate(regionId) {
 
 // ─── Build mesh for a single region ──────────────────────────────────
 function buildRegionMesh(region) {
-    const tBuild0 = performance.now();
-    const { geometry: rawGeo, faceIds: rawFaceIds, timeMs, cached } = region.evaluateBrushes();
-    const tAfterEval = performance.now();
+    const { geometry: rawGeo, faceIds: rawFaceIds, timeMs } = region.evaluateBrushes();
 
     let finalGeo, finalFaceIds, material;
+    let finalTriZones = null, finalTriCentroids = null;
     if (state.viewMode === 'textured') {
         const result = assignUVsAndZones(rawGeo, rawFaceIds, region.brushes, getCSGMaterialsForScheme);
         finalGeo = result.geometry;
         finalFaceIds = result.faceIds;
+        finalTriZones = result.triZones;
+        finalTriCentroids = result.triCentroids;
         material = result.materials;
         rawGeo.dispose();
     } else {
@@ -102,7 +103,6 @@ function buildRegionMesh(region) {
             finalGeo.setAttribute('color', new THREE.Float32BufferAttribute(whiteColors, 3));
         }
     }
-    const tAfterUV = performance.now();
 
     const mesh = new THREE.Mesh(finalGeo, material);
     mesh.userData = { regionId: region.id, isCSG: true };
@@ -112,32 +112,22 @@ function buildRegionMesh(region) {
     // cast in the editor preview. The runtime renderer gets correct shadows.
     mesh.castShadow = false;
     mesh.receiveShadow = true;
-    const tAfterMesh = performance.now();
 
-    // Edge wireframe overlay — defer until the user pauses. Recomputing on
-    // every keystroke cost ~60ms at 37k tris; the overlay is cosmetic.
-    const tAfterEdges = performance.now();
-
-    csgRegionMeshes.set(region.id, { mesh, faceIds: finalFaceIds, lastEvalMs: timeMs, region });
+    csgRegionMeshes.set(region.id, {
+        mesh,
+        faceIds: finalFaceIds,
+        triZones: finalTriZones,
+        triCentroids: finalTriCentroids,
+        lastEvalMs: timeMs,
+        region,
+    });
     scene.add(mesh);
     scheduleEdgesUpdate(region.id);
-
-    const buildTotal = performance.now() - tBuild0;
-    const source = cached ? 'cached' : 'wasm';
-    const bcount = region.brushes.length + region.bakedBrushes.length;
-    const triCount = finalGeo.index ? finalGeo.index.count / 3 : 0;
-    const uvMs = (tAfterUV - tAfterEval).toFixed(1);
-    const meshMs = (tAfterMesh - tAfterUV).toFixed(1);
-    const edgesMs = (tAfterEdges - tAfterMesh).toFixed(1);
-    console.log(`[CSG] region ${region.id}: ${bcount} brushes, ${triCount} tris | eval ${timeMs.toFixed(1)}ms (${source}) | uv ${uvMs}ms | mesh ${meshMs}ms | edges ${edgesMs}ms | total ${buildTotal.toFixed(1)}ms`);
 }
 
 // ─── Full rebuild ────────────────────────────────────────────────────
 // Used by undo, load, delete, and any change that may alter clustering.
 export function rebuildAllCSG(brushes = state.csg.brushes) {
-    const tAll0 = performance.now();
-    console.log(`[CSG] === FULL REBUILD start (${brushes.length} brushes) ===`);
-
     // Tear down all existing region meshes
     for (const [, data] of csgRegionMeshes) disposeRegion(data);
     csgRegionMeshes.clear();
@@ -148,10 +138,7 @@ export function rebuildAllCSG(brushes = state.csg.brushes) {
 
     if (brushes.length === 0) return;
 
-    // Cluster brushes into connected regions
-    const tCluster0 = performance.now();
     const regions = clusterBrushes(brushes);
-    const clusterMs = performance.now() - tCluster0;
 
     for (const region of regions) {
         // Assign stable IDs
@@ -165,17 +152,12 @@ export function rebuildAllCSG(brushes = state.csg.brushes) {
 
         buildRegionMesh(region);
     }
-
-    const totalMs = performance.now() - tAll0;
-    console.log(`[CSG] === FULL REBUILD end: ${regions.length} regions, cluster ${clusterMs.toFixed(1)}ms, total ${totalMs.toFixed(1)}ms ===`);
 }
 
 // ─── Incremental rebuild ─────────────────────────────────────────────
 // Only re-evaluates regions that contain the given brush IDs.
 // All other region meshes stay untouched in the scene.
 export function rebuildAffectedRegions(brushIds) {
-    const tIncr0 = performance.now();
-    console.log(`[CSG] --- incr rebuild start: brushIds=[${(brushIds || []).join(',')}] ---`);
     if (!brushIds || brushIds.length === 0) { rebuildAllCSG(); return; }
 
     // Auto-assign any unmapped brush ids. Push/pull/extrude create sub-face
@@ -213,9 +195,6 @@ export function rebuildAffectedRegions(brushIds) {
         // Rebuild just this region
         buildRegionMesh(region);
     }
-
-    const totalMs = performance.now() - tIncr0;
-    console.log(`[CSG] --- incr rebuild end: ${dirtyRegionIds.size}/${regionMap.size} regions, total ${totalMs.toFixed(1)}ms ---`);
 }
 
 // ─── Brush-to-region assignment (for new brushes) ────────────────────

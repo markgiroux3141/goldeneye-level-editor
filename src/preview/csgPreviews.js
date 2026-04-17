@@ -87,7 +87,48 @@ function buildFaceQuad(face, u0, u1, v0, v1, offset) {
     return geo;
 }
 
+// Build a highlight geometry for the exact triangle at sel.triIndex on the
+// region's live CSG mesh. Pushes the verts slightly along the face normal so
+// the highlight doesn't z-fight the surface. Returns null if the index is
+// stale (e.g. after a rebuild that reordered tris).
+function buildTriangleHighlight(sel, offset) {
+    if (sel.regionId == null || sel.triIndex == null) return null;
+    const data = csgRegionMeshes.get(sel.regionId);
+    if (!data) return null;
+    const geom = data.mesh.geometry;
+    const idx = geom.index;
+    const pos = geom.getAttribute('position');
+    if (!idx || !pos) return null;
+    const ti = sel.triIndex;
+    if (ti < 0 || ti * 3 + 2 >= idx.count) return null;
+    const i0 = idx.getX(ti * 3);
+    const i1 = idx.getX(ti * 3 + 1);
+    const i2 = idx.getX(ti * 3 + 2);
+
+    // Normal from the face axis/side — cheaper than computing from verts and
+    // matches the same offset direction used for face quads.
+    let nx = 0, ny = 0, nz = 0;
+    const s = sel.side === 'min' ? 1 : -1;
+    if (sel.axis === 'x') nx = s;
+    else if (sel.axis === 'y') ny = s;
+    else nz = s;
+
+    const positions = new Float32Array(9);
+    const indices = [i0, i1, i2];
+    for (let k = 0; k < 3; k++) {
+        const vi = indices[k];
+        positions[k * 3]     = pos.getX(vi) + nx * offset;
+        positions[k * 3 + 1] = pos.getY(vi) + ny * offset;
+        positions[k * 3 + 2] = pos.getZ(vi) + nz * offset;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.computeVertexNormals();
+    return geo;
+}
+
 // Update the orange selection preview (rectangle on the selected face).
+// In Face Paint mode, draws just the clicked triangle instead.
 // Called every frame from the indoor animate loop.
 export function updateCSGSelectionPreview(camera) {
     disposeMesh(selectionMesh);
@@ -96,6 +137,17 @@ export function updateCSGSelectionPreview(camera) {
     const sel = state.csg.selectedFace;
     if (!sel || !isPointerLocked()) return;
     if (state.csg.holeMode) return; // hole preview takes over while in hole mode
+
+    // Face Paint: highlight the exact triangle the user picked (stays locked
+    // regardless of where the cursor currently points), so arrow up/down has
+    // an obvious target.
+    if (state.csg.facePaintMode) {
+        const geo = buildTriangleHighlight(sel, SEL_OFFSET * WORLD_SCALE);
+        if (!geo) return;
+        selectionMesh = new THREE.Mesh(geo, selectionMat);
+        scene.add(selectionMesh);
+        return;
+    }
 
     const faceInfo = getSelectedFaceInfo();
     if (!faceInfo) return;

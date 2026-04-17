@@ -51,6 +51,7 @@ export function clearCSGToolState() {
     state.csg.holeMode = false;
     state.csg.holeDoor = false;
     state.csg.doorPreview = null;
+    state.csg.facePaintMode = false;
     state.csg.selSizeU = 0;
     state.csg.selSizeV = 0;
 }

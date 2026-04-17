@@ -161,9 +161,9 @@ export function updateHUD(camera) {
             const selSizeU = state.csg.selSizeU;
             const selSizeV = state.csg.selSizeV;
             if (selSizeU > 0 || selSizeV > 0) {
-                lines.push(`Sub-face selection: ${selSizeU || 'full'} x ${selSizeV || 'full'} (scroll to resize)`);
+                lines.push(`Sub-face selection: ${selSizeU || 'full'} x ${selSizeV || 'full'} (scroll U, Shift+scroll V)`);
             } else {
-                lines.push(`Full face (scroll to shrink)`);
+                lines.push(`Full face (scroll U, Shift+scroll V)`);
             }
 
             // Taper for the selected face, if any

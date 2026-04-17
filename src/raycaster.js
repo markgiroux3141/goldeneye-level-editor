@@ -38,6 +38,7 @@ export function pickCSGFace(camera, csgRegionMeshes) {
     if (triIndex >= 0 && triIndex < faceIds.length) {
         return {
             regionId,
+            triIndex,
             ...faceIds[triIndex],
             point: hit.point,
         };
@@ -167,7 +168,7 @@ export function pickAny(camera, csgRegionMeshes, platformMeshes, lightPickTarget
         if (faceIds) {
             const triIndex = hit.faceIndex;
             if (triIndex >= 0 && triIndex < faceIds.length) {
-                return { type: 'csg', regionId, ...faceIds[triIndex], point: hit.point };
+                return { type: 'csg', regionId, triIndex, ...faceIds[triIndex], point: hit.point };
             }
         }
     }

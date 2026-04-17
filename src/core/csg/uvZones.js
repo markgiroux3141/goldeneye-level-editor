@@ -34,7 +34,15 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
     const newColors = [];   // white (1,1,1) baseline; lighting baker overwrites later
     const newFaceIds = [];
     const triZones = [];
+    const triCentroids = [];   // flat xyz per tri, world space — used for per-tri overrides
     const triSchemes = [];
+
+    // Closure-scoped owner brush for the triangle currently being emitted.
+    // Set in the outer loop before each run of emitTri calls so emitTri can
+    // look up brush.triZoneOverrides without threading the brush through every
+    // call site (there are ~20).
+    let currentOwnerBrush = null;
+    const TRI_OVERRIDE_EPS = WORLD_SCALE * 0.5;
 
     // Helper: compute UV from world position for a given face axis.
     // originY shifts the V coordinate of wall faces so the wall texture
@@ -61,7 +69,26 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
         const dot = _cross.x * nx + _cross.y * ny + _cross.z * nz;
         const [vB, vC] = dot < 0 ? [pC, pB] : [pB, pC];
 
-        triZones.push(zone);
+        const cx = (pA.x + vB.x + vC.x) / 3;
+        const cy = (pA.y + vB.y + vC.y) / 3;
+        const cz = (pA.z + vB.z + vC.z) / 3;
+
+        let finalZone = zone;
+        const ovs = currentOwnerBrush && currentOwnerBrush.triZoneOverrides;
+        if (ovs && ovs.length > 0) {
+            for (let i = 0; i < ovs.length; i++) {
+                const o = ovs[i];
+                if (Math.abs(o.cx - cx) < TRI_OVERRIDE_EPS &&
+                    Math.abs(o.cy - cy) < TRI_OVERRIDE_EPS &&
+                    Math.abs(o.cz - cz) < TRI_OVERRIDE_EPS) {
+                    finalZone = o.zone;
+                    break;
+                }
+            }
+        }
+
+        triZones.push(finalZone);
+        triCentroids.push(cx, cy, cz);
         triSchemes.push(schemeKey);
         newFaceIds.push(faceId);
         for (const v of [pA, vB, vC]) {
@@ -190,7 +217,11 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
         const nx = normal.x, ny = normal.y, nz = normal.z;
 
         const ownerBrush = (faceId.brushId !== 0) ? brushById.get(faceId.brushId) : null;
-        const scheme = ownerBrush ? ownerBrush.schemeKey : 'facility_white_tile';
+        currentOwnerBrush = ownerBrush;
+        const overrideKey = faceId.axis + '-' + faceId.side;
+        const scheme = ownerBrush
+            ? ((ownerBrush.schemeOverrides && ownerBrush.schemeOverrides[overrideKey]) || ownerBrush.schemeKey)
+            : 'facility_white_tile';
         const originY = ownerBrush ? ownerBrush.floorY : 0;
 
         // Brace brushes: if the scheme defines a dedicated zone-7 brace texture,
@@ -423,10 +454,17 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
 
     const sortedIndices = [];
     const sortedFaceIds = [];
-    for (const { idx: ti } of triOrder) {
+    const sortedTriZones = new Uint8Array(triOrder.length);
+    const sortedTriCentroids = new Float32Array(triOrder.length * 3);
+    for (let i = 0; i < triOrder.length; i++) {
+        const ti = triOrder[i].idx;
         const base = ti * 3;
         sortedIndices.push(base, base + 1, base + 2);
         sortedFaceIds.push(newFaceIds[ti]);
+        sortedTriZones[i] = triZones[ti];
+        sortedTriCentroids[i * 3] = triCentroids[ti * 3];
+        sortedTriCentroids[i * 3 + 1] = triCentroids[ti * 3 + 1];
+        sortedTriCentroids[i * 3 + 2] = triCentroids[ti * 3 + 2];
     }
     newGeo.setIndex(sortedIndices);
 
@@ -443,5 +481,11 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
     }
     if (groupCount > 0) newGeo.addGroup(groupStart, groupCount, currentMatIdx);
 
-    return { geometry: newGeo, faceIds: sortedFaceIds, materials: combinedMaterials };
+    return {
+        geometry: newGeo,
+        faceIds: sortedFaceIds,
+        triZones: sortedTriZones,
+        triCentroids: sortedTriCentroids,
+        materials: combinedMaterials,
+    };
 }

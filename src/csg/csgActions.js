@@ -16,6 +16,7 @@ import {
     WORLD_SCALE, WALL_THICKNESS, WALL_SPLIT_V,
     MIN_BRACE_DIM, MAX_BRACE_DIM, MIN_PILLAR_SIZE, MAX_PILLAR_SIZE,
 } from '../core/constants.js';
+import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
 
 // ─── Constants ──────────────────────────────────────────────────────
 const PUSH_PULL_STEP = 4;
@@ -131,6 +132,10 @@ export function selectFaceAtCrosshair(face) {
         state.csg.activeSide = null;
         state.csg.activeStairOp = null;
         state.csg.pendingStairOp = null;
+    } else if (face.triIndex !== undefined) {
+        // Same face, different triangle — refresh triIndex/point for Face Paint.
+        state.csg.selectedFace.triIndex = face.triIndex;
+        state.csg.selectedFace.point = face.point;
     }
 }
 
@@ -276,7 +281,7 @@ function growActiveBrush(amount) {
     }
 }
 
-export function pushSelectedFace() {
+export function pushSelectedFace(step = PUSH_PULL_STEP) {
     const csg = state.csg;
     if (!csg.selectedFace) return;
 
@@ -288,8 +293,8 @@ export function pushSelectedFace() {
         // Full-face push on a real brush — resize directly
         const { axis, side } = sel;
         const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
-        if (side === 'max') { brush[dimKey] += PUSH_PULL_STEP; }
-        else { brush[axis] -= PUSH_PULL_STEP; brush[dimKey] += PUSH_PULL_STEP; }
+        if (side === 'max') { brush[dimKey] += step; }
+        else { brush[axis] -= step; brush[dimKey] += step; }
         if (axis === 'y' && side === 'min') brush.floorY = brush.y;
         sel.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
         csg.activeBrush = null;
@@ -297,10 +302,10 @@ export function pushSelectedFace() {
     } else {
         // Sub-face push or baked-face push — create/grow a subtractive brush
         if (csg.activeBrush && csg.activeOp === 'push') {
-            growActiveBrush(PUSH_PULL_STEP);
+            growActiveBrush(step);
         } else {
             csg.activeSide = sel.side;
-            csg.activeBrush = createSubFaceBrush('subtract', PUSH_PULL_STEP);
+            csg.activeBrush = createSubFaceBrush('subtract', step);
             csg.activeOp = 'push';
         }
         csg.selectedFace = getActiveBrushOutwardFace();
@@ -312,7 +317,7 @@ export function pushSelectedFace() {
     else rebuildAllCSG();
 }
 
-export function pullSelectedFace() {
+export function pullSelectedFace(step = PUSH_PULL_STEP) {
     const csg = state.csg;
     if (!csg.selectedFace) return;
 
@@ -321,21 +326,21 @@ export function pullSelectedFace() {
     const isBaked = sel.brushId === 0;
 
     if (csg.activeBrush && csg.activeOp === 'pull') {
-        growActiveBrush(PUSH_PULL_STEP);
+        growActiveBrush(step);
         csg.selectedFace = getActiveBrushInwardFace();
     } else if (isFullFace() && brush && !isBaked) {
         const { axis, side } = sel;
         const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
-        if (brush[dimKey] <= PUSH_PULL_STEP) return;
-        if (side === 'max') { brush[dimKey] -= PUSH_PULL_STEP; }
-        else { brush[axis] += PUSH_PULL_STEP; brush[dimKey] -= PUSH_PULL_STEP; }
+        if (brush[dimKey] <= step) return;
+        if (side === 'max') { brush[dimKey] -= step; }
+        else { brush[axis] += step; brush[dimKey] -= step; }
         if (axis === 'y' && side === 'min') brush.floorY = brush.y;
         sel.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
         csg.activeBrush = null;
         csg.activeSide = null;
     } else {
         csg.activeSide = sel.side;
-        csg.activeBrush = createSubFaceBrush('add', PUSH_PULL_STEP);
+        csg.activeBrush = createSubFaceBrush('add', step);
         csg.activeOp = 'pull';
         csg.selectedFace = getActiveBrushInwardFace();
         csg.selSizeU = 0; csg.selSizeV = 0;
@@ -346,7 +351,7 @@ export function pullSelectedFace() {
     else rebuildAllCSG();
 }
 
-export function extrudeSelectedFace() {
+export function extrudeSelectedFace(step = PUSH_PULL_STEP) {
     const csg = state.csg;
     if (!csg.selectedFace) return;
 
@@ -360,7 +365,7 @@ export function extrudeSelectedFace() {
     else if (isBaked) faceInfo = getBakedFaceUVInfo(sel);
     if (!faceInfo) return;
 
-    const depth = PUSH_PULL_STEP;
+    const depth = step;
     let nx, ny, nz, nw, nh, nd;
 
     if (axis === 'x') {
@@ -401,10 +406,10 @@ export function extrudeSelectedFace() {
 }
 
 // Continue an active extrude (called when user presses + after extrude)
-export function growActiveExtrude() {
+export function growActiveExtrude(step = 1) {
     const csg = state.csg;
     if (!csg.activeBrush || csg.activeOp !== 'extrude') return false;
-    growActiveBrush(1);
+    growActiveBrush(step);
     csg.selectedFace = getActiveBrushOutwardFace();
     rebuildAffectedRegions([csg.activeBrush.id]);
     return true;
@@ -425,12 +430,16 @@ export function growActiveExtrude() {
 //   • Entire alcove ceiling raised to H+N from the very first step
 //     (head clearance, so the player doesn't bonk going up).
 
-// True iff the V (vertical) span of the current selection covers the whole face.
-function isFullVerticalSelection() {
+// True iff the V (vertical) bottom of the current selection sits on the face's floor (vMin).
+// Only meaningful for walls (axis !== 'y'). Callers should ensure selection bounds are
+// populated (either by the preview updater each frame or by ensureSelectionBounds()).
+function wallSelectionTouchesFloor() {
+    const sel = state.csg.selectedFace;
+    if (!sel || sel.axis === 'y') return false;
     const info = getSelectedFaceInfo();
     if (!info) return false;
-    const { selSizeV } = state.csg;
-    return selSizeV <= 0 || selSizeV >= info.vSize;
+    if (state.csg.selSizeV <= 0) return true;  // full-V implicitly touches the floor
+    return state.csg.selV0 === info.vMin;
 }
 
 // Remove brushes by id from the global brush list and region tracking. No rebuild — caller does it.
@@ -465,9 +474,6 @@ export function pushSelectedFaceAsStairs(direction) {
     const sel = csg.selectedFace;
     if (!sel) return;
     if (sel.axis === 'y') return;            // floors/ceilings not supported
-    if (!isFullVerticalSelection()) return;  // require floor-to-ceiling V
-
-    ensureSelectionBounds();
 
     // Resolve face V bounds and anchor brush for texture inheritance.
     let info;
@@ -481,8 +487,11 @@ export function pushSelectedFaceAsStairs(direction) {
     }
     if (!info) return;
 
+    ensureSelectionBounds();
+    if (!wallSelectionTouchesFloor()) return;  // require bottom of selection at floor
+
     const floor = info.vMin;
-    const H = info.vMax;
+    const H = csg.selSizeV <= 0 ? info.vMax : csg.selV1;
     const facePos = sel.position;
 
     // Inherit texture scheme from anchor brush
@@ -714,6 +723,7 @@ export function setHoleMode(on, door) {
     csg.holeDoor = !!door;
     csg.doorPreview = null;
     if (on) {
+        csg.facePaintMode = false;
         csg.activeBrush = null;
         csg.activeOp = null;
         csg.activeSide = null;
@@ -833,6 +843,7 @@ export function setBraceMode(on) {
     if (on) {
         csg.holeMode = false;
         csg.doorPreview = null;
+        csg.facePaintMode = false;
         csg.activeBrush = null;
         csg.activeOp = null;
         csg.activeSide = null;
@@ -948,10 +959,168 @@ export function setPillarMode(on) {
         csg.bracePreview = null;
         csg.holeMode = false;
         csg.doorPreview = null;
+        csg.facePaintMode = false;
         csg.activeBrush = null;
         csg.activeOp = null;
         csg.activeSide = null;
     }
+}
+
+// Face-paint mode: click a face, press 1-9 to override that face's scheme.
+export function setFacePaintMode(on) {
+    const csg = state.csg;
+    csg.facePaintMode = !!on;
+    if (on) {
+        csg.holeMode = false;
+        csg.doorPreview = null;
+        csg.braceMode = false;
+        csg.bracePreview = null;
+        csg.pillarMode = false;
+        csg.pillarPreview = null;
+        csg.activeBrush = null;
+        csg.activeOp = null;
+        csg.activeSide = null;
+    }
+}
+
+export function exitFacePaintMode() {
+    state.csg.facePaintMode = false;
+}
+
+// Apply a scheme override to the currently-selected face's owning brush.
+// Returns true on success, false if no face is selected or it's a baked face.
+export function applyFaceSchemeOverride(schemeName) {
+    const sel = state.csg.selectedFace;
+    if (!sel) return false;
+    if (sel.brushId === 0) return false;  // baked faces have no live brush
+    const brush = findBrushById(sel.brushId, sel.regionId);
+    if (!brush) return false;
+    const key = sel.axis + '-' + sel.side;
+    if (!brush.schemeOverrides) brush.schemeOverrides = {};
+    brush.schemeOverrides[key] = schemeName;
+    rebuildAffectedRegions([brush.id]);
+    return true;
+}
+
+// Clear the override on the currently-selected face (revert to brush.schemeKey).
+export function clearFaceSchemeOverride() {
+    const sel = state.csg.selectedFace;
+    if (!sel) return false;
+    if (sel.brushId === 0) return false;
+    const brush = findBrushById(sel.brushId, sel.regionId);
+    if (!brush || !brush.schemeOverrides) return false;
+    const key = sel.axis + '-' + sel.side;
+    if (!(key in brush.schemeOverrides)) return false;
+    delete brush.schemeOverrides[key];
+    rebuildAffectedRegions([brush.id]);
+    return true;
+}
+
+// ─── Per-triangle zone overrides (Face Paint: arrow up/down) ──────────
+// The selected triangle's current zone is looked up from the region's
+// triZones array. The cycle list is the zones actually defined in the
+// triangle's scheme (typically 0/1/2/3, optionally 5/6/7).
+const TRI_OVERRIDE_EPS = WORLD_SCALE * 0.5;
+
+function findTriOverrideIndex(brush, cx, cy, cz) {
+    if (!brush.triZoneOverrides) return -1;
+    for (let i = 0; i < brush.triZoneOverrides.length; i++) {
+        const o = brush.triZoneOverrides[i];
+        if (Math.abs(o.cx - cx) < TRI_OVERRIDE_EPS &&
+            Math.abs(o.cy - cy) < TRI_OVERRIDE_EPS &&
+            Math.abs(o.cz - cz) < TRI_OVERRIDE_EPS) return i;
+    }
+    return -1;
+}
+
+// After a CSG rebuild the triangle sort order may change (zones drive the
+// material groups, so changing a zone shuffles the sorted index). Re-link the
+// selected triangle by matching its centroid so the highlight and subsequent
+// arrow presses keep targeting the same physical triangle.
+function relinkSelectedTriangle(regionId, cx, cy, cz) {
+    const sel = state.csg.selectedFace;
+    if (!sel) return;
+    const data = csgRegionMeshes.get(regionId);
+    if (!data || !data.triCentroids) return;
+    const tc = data.triCentroids;
+    for (let i = 0; i < tc.length / 3; i++) {
+        if (Math.abs(tc[i * 3] - cx) < TRI_OVERRIDE_EPS &&
+            Math.abs(tc[i * 3 + 1] - cy) < TRI_OVERRIDE_EPS &&
+            Math.abs(tc[i * 3 + 2] - cz) < TRI_OVERRIDE_EPS) {
+            sel.triIndex = i;
+            return;
+        }
+    }
+}
+
+function getSelectedTriangleData() {
+    const sel = state.csg.selectedFace;
+    if (!sel || sel.triIndex == null || sel.regionId == null) return null;
+    const data = csgRegionMeshes.get(sel.regionId);
+    if (!data || !data.triZones || !data.triCentroids) return null;
+    const ti = sel.triIndex;
+    if (ti < 0 || ti >= data.triZones.length) return null;
+    return {
+        zone: data.triZones[ti],
+        cx: data.triCentroids[ti * 3],
+        cy: data.triCentroids[ti * 3 + 1],
+        cz: data.triCentroids[ti * 3 + 2],
+    };
+}
+
+// Step the selected triangle's zone to the next/prev entry in its scheme's
+// defined zones. Persists as a per-triangle override on the owning brush.
+// Returns the new zone on success, or null.
+export function cycleTriangleZone(direction) {
+    const sel = state.csg.selectedFace;
+    if (!sel) return null;
+    if (sel.brushId === 0) return null;
+    const brush = findBrushById(sel.brushId, sel.regionId);
+    if (!brush) return null;
+    const tri = getSelectedTriangleData();
+    if (!tri) return null;
+
+    const faceKey = sel.axis + '-' + sel.side;
+    const schemeKey = (brush.schemeOverrides && brush.schemeOverrides[faceKey]) || brush.schemeKey;
+    const scheme = TEXTURE_SCHEMES[schemeKey];
+    if (!scheme || !scheme.zones) return null;
+    const zoneList = Object.keys(scheme.zones).map(Number).sort((a, b) => a - b);
+    if (zoneList.length === 0) return null;
+
+    let curIdx = zoneList.indexOf(tri.zone);
+    if (curIdx === -1) curIdx = 0;
+    const step = direction >= 0 ? 1 : -1;
+    const nextIdx = (curIdx + step + zoneList.length) % zoneList.length;
+    const newZone = zoneList[nextIdx];
+
+    if (!brush.triZoneOverrides) brush.triZoneOverrides = [];
+    const existing = findTriOverrideIndex(brush, tri.cx, tri.cy, tri.cz);
+    if (existing >= 0) {
+        brush.triZoneOverrides[existing].zone = newZone;
+    } else {
+        brush.triZoneOverrides.push({ cx: tri.cx, cy: tri.cy, cz: tri.cz, zone: newZone });
+    }
+    rebuildAffectedRegions([brush.id]);
+    relinkSelectedTriangle(sel.regionId, tri.cx, tri.cy, tri.cz);
+    return newZone;
+}
+
+// Remove the per-triangle override at the selected triangle's centroid.
+// Returns true if an override was cleared.
+export function clearTriangleZoneOverride() {
+    const sel = state.csg.selectedFace;
+    if (!sel) return false;
+    if (sel.brushId === 0) return false;
+    const brush = findBrushById(sel.brushId, sel.regionId);
+    if (!brush || !brush.triZoneOverrides || brush.triZoneOverrides.length === 0) return false;
+    const tri = getSelectedTriangleData();
+    if (!tri) return false;
+    const existing = findTriOverrideIndex(brush, tri.cx, tri.cy, tri.cz);
+    if (existing < 0) return false;
+    brush.triZoneOverrides.splice(existing, 1);
+    rebuildAffectedRegions([brush.id]);
+    relinkSelectedTriangle(sel.regionId, tri.cx, tri.cy, tri.cz);
+    return true;
 }
 
 export function exitPillarMode() {
@@ -1073,7 +1242,10 @@ export function retextureRoom(schemeKey) {
 
     const roomIds = findRoomBrushes(startBrush, state.csg.brushes);
     const roomBrushes = state.csg.brushes.filter(b => roomIds.has(b.id));
-    const roomFloorY = Math.min(...roomBrushes.map(b => b.minY));
+    // Room floor comes from the additive brush only — stair voids and other
+    // subtract carves can extend below the visible floor and would otherwise
+    // pull the wall-texture split line down to ground level.
+    const roomFloorY = startBrush.minY;
     for (const b of roomBrushes) {
         b.schemeKey = schemeKey;
         b.floorY = roomFloorY;

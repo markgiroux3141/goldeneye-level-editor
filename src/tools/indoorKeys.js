@@ -33,6 +33,16 @@ export function handleIndoorKey(e, { gizmo, camera }) {
     if (isPointerLocked()) {
         if (hotkeyManager.matches('tool_csg', e)) {
             e.preventDefault();
+            // Also drop CSG sub-modes so Numpad 1 reliably returns to plain
+            // push/pull selection even when the user is already inside the CSG
+            // tool (e.g. coming from Face Paint, Hole, Brace, Pillar).
+            if (state.tool === 'csg') {
+                csgActions.exitFacePaintMode();
+                csgActions.exitHoleMode();
+                csgActions.exitBraceMode();
+                csgActions.exitPillarMode();
+                state.csg.selectedFace = null;
+            }
             setTool('csg');
             return;
         }
@@ -82,6 +92,13 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             showMessage('PILLAR mode — aim at floor, scroll to size, click to place');
             return;
         }
+        if (hotkeyManager.matches('tool_face_paint', e)) {
+            e.preventDefault();
+            setTool('csg');
+            csgActions.setFacePaintMode(true);
+            showMessage('FACE PAINT mode \u2014 click: face, 1-9: scheme, \u2191\u2193: fix triangle zone, 0: clear');
+            return;
+        }
     }
 
     // M key to switch to terrain
@@ -115,19 +132,42 @@ export function handleIndoorKey(e, { gizmo, camera }) {
 
     // ─── CSG tool keys ──────────────────────────────────────────────
     if (state.tool === 'csg' && isPointerLocked()) {
-        // Push/pull (also handles extrude continuation when activeOp === 'extrude')
+        // Push/pull (also handles extrude continuation when activeOp === 'extrude').
+        // Shift = fine 1-unit step instead of the default 4.
         if (hotkeyManager.matches('push', e)) {
             e.preventDefault();
+            const step = e.shiftKey ? 1 : undefined;
             if (!csgActions.growActiveExtrude()) {
                 saveUndoState();
-                csgActions.pushSelectedFace();
+                csgActions.pushSelectedFace(step);
             }
             return;
         }
         if (hotkeyManager.matches('pull', e)) {
             e.preventDefault();
             saveUndoState();
-            csgActions.pullSelectedFace();
+            const step = e.shiftKey ? 1 : undefined;
+            csgActions.pullSelectedFace(step);
+            return;
+        }
+        // In Face Paint mode, arrow up/down cycles the clicked triangle's zone
+        // (floor/ceiling/wall-lower/wall-upper/…) within its scheme. This
+        // corrects individual triangles that CSG mis-classified.
+        if (state.csg.facePaintMode && (hotkeyManager.matches('stair_up', e) || hotkeyManager.matches('stair_down', e))) {
+            e.preventDefault();
+            if (!state.csg.selectedFace || state.csg.selectedFace.triIndex == null) {
+                showMessage('Face paint: click a triangle first');
+                return;
+            }
+            saveUndoState();
+            const direction = hotkeyManager.matches('stair_up', e) ? 1 : -1;
+            const newZone = csgActions.cycleTriangleZone(direction);
+            if (newZone != null) {
+                const zoneNames = { 0: 'floor', 1: 'ceiling', 2: 'wall (lower)', 3: 'wall (upper)', 5: 'tunnel side', 6: 'tunnel floor', 7: 'brace' };
+                showMessage(`Triangle zone: ${zoneNames[newZone] || newZone}`);
+            } else {
+                showMessage('Cannot change zone on this triangle');
+            }
             return;
         }
         // Arrow keys: adjust pending stair counter (no CSG rebuild yet)
@@ -137,6 +177,9 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             if (state.csg.pendingStairOp) {
                 const op = state.csg.pendingStairOp;
                 showMessage(`Stairs: ${op.stepCount} step${op.stepCount > 1 ? 's' : ''} ${op.direction} \u2014 Enter to confirm, Esc to cancel`);
+            } else {
+                const sel = state.csg.selectedFace;
+                if (sel && sel.axis !== 'y') showMessage('Stairs need the selection to touch the floor');
             }
             return;
         }
@@ -146,6 +189,9 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             if (state.csg.pendingStairOp) {
                 const op = state.csg.pendingStairOp;
                 showMessage(`Stairs: ${op.stepCount} step${op.stepCount > 1 ? 's' : ''} ${op.direction} \u2014 Enter to confirm, Esc to cancel`);
+            } else {
+                const sel = state.csg.selectedFace;
+                if (sel && sel.axis !== 'y') showMessage('Stairs need the selection to touch the floor');
             }
             return;
         }
@@ -160,11 +206,12 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             }
             return;
         }
-        // E = extrude selected face
+        // E = extrude selected face (Shift+E = 1-unit depth)
         if (e.code === 'KeyE') {
             e.preventDefault();
             saveUndoState();
-            csgActions.extrudeSelectedFace();
+            const step = e.shiftKey ? 1 : undefined;
+            csgActions.extrudeSelectedFace(step);
             return;
         }
         // B = bake current region
@@ -192,17 +239,40 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             else csgActions.scaleSelectedFace(-1, -1);
             return;
         }
-        // Main-row digit keys (Digit1..Digit9): retexture room.
+        // Main-row digit keys (Digit1..Digit9): retexture room, or in Face Paint
+        // mode, apply a per-face scheme override. Digit0 clears an override.
         // Use e.code, NOT e.key, so numpad numbers (Numpad1..Numpad6 — used
         // for tool switching above) don't trigger retexture when NumLock is on.
+        if (state.csg.facePaintMode && e.code === 'Digit0' && state.csg.selectedFace) {
+            e.preventDefault();
+            saveUndoState();
+            // Prefer clearing a per-triangle zone override if one exists at the
+            // picked triangle; otherwise clear the whole-face scheme override.
+            if (csgActions.clearTriangleZoneOverride()) {
+                showMessage('Triangle zone override cleared');
+            } else if (csgActions.clearFaceSchemeOverride()) {
+                showMessage('Face override cleared');
+            } else {
+                showMessage('No override on this face/triangle');
+            }
+            return;
+        }
         if (e.code >= 'Digit1' && e.code <= 'Digit9') {
             const digit = e.code.slice(5); // 'Digit1' → '1'
             const schemeName = getSchemeByKey(digit);
             if (schemeName && state.csg.selectedFace) {
                 e.preventDefault();
                 saveUndoState();
-                csgActions.retextureRoom(schemeName);
-                showMessage('Scheme: ' + (TEXTURE_SCHEMES[schemeName]?.label || schemeName));
+                if (state.csg.facePaintMode) {
+                    if (csgActions.applyFaceSchemeOverride(schemeName)) {
+                        showMessage('Face override: ' + (TEXTURE_SCHEMES[schemeName]?.label || schemeName));
+                    } else {
+                        showMessage('Cannot override baked face — un-bake the region first');
+                    }
+                } else {
+                    csgActions.retextureRoom(schemeName);
+                    showMessage('Scheme: ' + (TEXTURE_SCHEMES[schemeName]?.label || schemeName));
+                }
                 return;
             }
         }
@@ -228,6 +298,9 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             } else if (state.csg.pillarMode) {
                 csgActions.exitPillarMode();
                 showMessage('Pillar mode cancelled');
+            } else if (state.csg.facePaintMode) {
+                csgActions.exitFacePaintMode();
+                showMessage('Face Paint mode cancelled');
             } else {
                 state.csg.selectedFace = null;
                 state.csg.activeBrush = null;

@@ -6,7 +6,7 @@ import { state } from '../state.js';
 import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
 import { gridHelper } from '../scene/setup.js';
 import { setTool } from '../tools/ToolManager.js';
-import { setHoleMode } from '../csg/csgActions.js';
+import { setHoleMode, setFacePaintMode } from '../csg/csgActions.js';
 import { PLATFORM_STYLES } from '../geometry/platformStyles.js';
 import { exportSceneToGLB } from '../io/GLBExporter.js';
 
@@ -59,6 +59,10 @@ function handleToolAction(toolName) {
         callbacks.showMessage('Click first stair endpoint — Esc to cancel');
     } else if (toolName === 'light') {
         setTool('light');
+    } else if (toolName === 'face_paint') {
+        setTool('csg');
+        setFacePaintMode(true);
+        callbacks.showMessage('FACE PAINT mode — click a face, press 1-9 to override scheme (0 to clear)');
     }
 }
 

@@ -13,6 +13,7 @@ const DEFAULT_BINDINGS = {
     'tool_light':         'Numpad6',
     'tool_brace':         'Numpad7',
     'tool_pillar':        'Numpad8',
+    'tool_face_paint':    'Numpad9',
     'toggle_view':      'KeyV',
     'toggle_mode':      'KeyM',
     'push':             'Equal',      // +/= key
@@ -43,6 +44,7 @@ const ACTION_LABELS = {
     'tool_light':         'Tool: Light',
     'tool_brace':         'Tool: Brace',
     'tool_pillar':        'Tool: Pillar',
+    'tool_face_paint':    'Tool: Face Paint',
     'toggle_view':      'Toggle View',
     'toggle_mode':      'Toggle Indoor/Terrain',
     'push':             'Push / Extrude',

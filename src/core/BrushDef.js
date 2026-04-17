@@ -23,8 +23,18 @@ export class BrushDef {
         this.isStairVoid = false;
         this.stairDescriptorId = null; // links to csgStairs[] entry
         this.schemeKey = 'facility_white_tile';
+        // Per-face scheme overrides: key = 'x-min'|'x-max'|'y-min'|'y-max'|'z-min'|'z-max',
+        // value = scheme name string. Read by uvZones.js, falls back to schemeKey when absent.
+        this.schemeOverrides = {};
+        // Per-triangle zone overrides for Face Paint correction. Each entry:
+        // { cx, cy, cz, zone } in world space. Matched within TRI_ZONE_EPS during CSG.
+        this.triZoneOverrides = [];
         this.floorY = y;               // WT-space anchor for wall texture vertical split
     }
+
+    hasSchemeOverrides() { return Object.keys(this.schemeOverrides).length > 0; }
+
+    hasTriZoneOverrides() { return this.triZoneOverrides.length > 0; }
 
     hasTaper() { return Object.keys(this.taper).length > 0; }
 
@@ -55,6 +65,8 @@ export class BrushDef {
         b.isStairVoid = this.isStairVoid;
         b.stairDescriptorId = this.stairDescriptorId;
         b.schemeKey = this.schemeKey;
+        b.schemeOverrides = JSON.parse(JSON.stringify(this.schemeOverrides));
+        b.triZoneOverrides = this.triZoneOverrides.map(o => ({ ...o }));
         b.floorY = this.floorY;
         return b;
     }
@@ -79,6 +91,8 @@ export class BrushDef {
             j.stairDescriptorId = this.stairDescriptorId;
         }
         if (this.schemeKey !== 'facility_white_tile') j.schemeKey = this.schemeKey;
+        if (this.hasSchemeOverrides()) j.schemeOverrides = this.schemeOverrides;
+        if (this.hasTriZoneOverrides()) j.triZoneOverrides = this.triZoneOverrides;
         if (this.floorY !== this.y) j.floorY = this.floorY;
         return j;
     }
@@ -99,6 +113,8 @@ export class BrushDef {
             b.stairDescriptorId = j.stairDescriptorId;
         }
         if (j.schemeKey) b.schemeKey = j.schemeKey;
+        if (j.schemeOverrides) b.schemeOverrides = j.schemeOverrides;
+        if (j.triZoneOverrides) b.triZoneOverrides = j.triZoneOverrides;
         if (j.floorY !== undefined) b.floorY = j.floorY;
         return b;
     }

@@ -52,6 +52,8 @@ export const state = {
         pillarMode: false,
         pillarPreview: null,    // { regionId, roomBrushId, box }
         pillarSize: DEFAULT_PILLAR_SIZE,
+        // Face-paint modal tool state — click a face, press 1-9 to override its texture scheme
+        facePaintMode: false,
     },
 
     tool: 'csg',            // 'csg' | 'platform' | 'light'
