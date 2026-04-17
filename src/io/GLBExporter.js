@@ -6,6 +6,7 @@
 
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { state } from '../state.js';
 import { csgRegionMeshes } from '../mesh/csgMesh.js';
 import { platformMeshes } from '../mesh/platformMesh.js';
 import { stairRunMeshes } from '../mesh/stairRunMesh.js';
@@ -17,10 +18,31 @@ export function exportSceneToGLB(filename = 'level.glb') {
     const exporter = new GLTFExporter();
     exporter.parse(
         exportScene,
-        (result) => downloadGLB(result, filename),
+        (result) => {
+            downloadGLB(result, filename);
+            const sidecarName = filename.replace(/\.glb$/i, '.lights.json');
+            downloadLightSidecar(sidecarName);
+        },
         (err) => console.error('GLB export failed:', err),
         { binary: true, embedImages: true, onlyVisible: true },
     );
+}
+
+// Sidecar JSON consumed by the in-game runtime. Positions stay in WT units
+// (the runtime multiplies by WORLD_SCALE = 0.25 to get Three.js meters).
+function downloadLightSidecar(filename) {
+    const sidecar = {
+        version: 1,
+        ambient: { intensity: state.ambientIntensity },
+        pointLights: state.pointLights.map(l => l.toJSON()),
+    };
+    const blob = new Blob([JSON.stringify(sidecar, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
 }
 
 function buildExportScene() {

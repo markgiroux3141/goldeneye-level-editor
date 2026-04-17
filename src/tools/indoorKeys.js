@@ -23,6 +23,8 @@ import {
     rebuildAllCSG,
 } from '../mesh/MeshManager.js';
 import { toggleEditorMode, setTool, clearPlatformToolState, clearLightToolState } from './ToolManager.js';
+import { PointLight } from '../core/PointLight.js';
+import { WORLD_SCALE } from '../core/constants.js';
 
 export function handleIndoorKey(e, { gizmo, camera }) {
     // ─── Tool/mode entry hotkeys (Numpad 1-6) ───────────────────────
@@ -86,6 +88,28 @@ export function handleIndoorKey(e, { gizmo, camera }) {
     if (hotkeyManager.matches('toggle_mode', e) && isPointerLocked()) {
         e.preventDefault();
         toggleEditorMode();
+        return;
+    }
+
+    // L key — place a light at the camera position from any tool, switch
+    // to light tool, and select the new light so the gizmo attaches.
+    if (hotkeyManager.matches('place_light_at_camera', e) && isPointerLocked()) {
+        e.preventDefault();
+        saveUndoState();
+        const S = WORLD_SCALE;
+        const light = new PointLight(
+            state.nextPointLightId++,
+            Math.round(camera.position.x / S),
+            Math.round(camera.position.y / S),
+            Math.round(camera.position.z / S),
+        );
+        state.pointLights.push(light);
+        rebuildLight(light);
+        setTool('light');
+        state.selectedLightId = light.id;
+        state.lightPhase = 'selected';
+        updateLightSelection();
+        showMessage(`Placed light ${light.id} at camera`);
         return;
     }
 

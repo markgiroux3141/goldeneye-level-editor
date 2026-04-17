@@ -90,6 +90,27 @@ export function loadBmpTextures() {
             rgbaTex.magFilter = THREE.NearestFilter;
             rgbaTex.minFilter = THREE.NearestMipMapLinearFilter;
             textureMap.set('railing', rgbaTex);
+
+            // Build a luminance-from-alpha companion for shadow alphaMap.
+            // MeshDistanceMaterial reads alphaMap's R channel, not the main map's A,
+            // so we splat the alpha channel into RGB on a second canvas.
+            const alphaCanvas = document.createElement('canvas');
+            alphaCanvas.width = canvas.width;
+            alphaCanvas.height = canvas.height;
+            const aCtx = alphaCanvas.getContext('2d');
+            const aImage = aCtx.createImageData(canvas.width, canvas.height);
+            const aData = aImage.data;
+            for (let i = 0; i < data.length; i += 4) {
+                const a = data[i + 3];
+                aData[i] = a; aData[i + 1] = a; aData[i + 2] = a; aData[i + 3] = 255;
+            }
+            aCtx.putImageData(aImage, 0, 0);
+            const alphaTex = new THREE.CanvasTexture(alphaCanvas);
+            alphaTex.wrapS = THREE.RepeatWrapping;
+            alphaTex.wrapT = THREE.RepeatWrapping;
+            alphaTex.magFilter = THREE.NearestFilter;
+            alphaTex.minFilter = THREE.NearestMipMapLinearFilter;
+            textureMap.set('railing_alpha', alphaTex);
             resolve();
         }, undefined, () => resolve());
     });
@@ -189,6 +210,7 @@ export function clearCSGMaterialCache() {
 
 // Double-sided alpha-tested material for railings.
 // The railing BMP is converted to RGBA during init (black → transparent).
+// Includes a customDistanceMaterial so point-light shadows respect the alpha cutout.
 export function getRailingMaterial() {
     const baseTex = textureMap.get('railing');
     if (!baseTex) {
@@ -197,12 +219,25 @@ export function getRailingMaterial() {
     const t = baseTex.clone();
     t.repeat.set(1.0, 1.0);
     t.needsUpdate = true;
-    return new THREE.MeshLambertMaterial({
+    const mat = new THREE.MeshLambertMaterial({
         map: t,
         side: THREE.DoubleSide,
         alphaTest: 0.5,
         transparent: true,
     });
+
+    const alphaSrc = textureMap.get('railing_alpha');
+    if (alphaSrc) {
+        const distAlpha = alphaSrc.clone();
+        distAlpha.repeat.copy(t.repeat);
+        distAlpha.needsUpdate = true;
+        mat.customDistanceMaterial = new THREE.MeshDistanceMaterial({
+            alphaMap: distAlpha,
+            alphaTest: 0.5,
+            depthPacking: THREE.RGBADepthPacking,
+        });
+    }
+    return mat;
 }
 
 // Simple wireframe-style material for railings in grid mode

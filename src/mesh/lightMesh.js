@@ -1,5 +1,6 @@
 // Light mesh lifecycle — visual representation of point lights in the editor.
-// Real-time preview (Three.js PointLights + dimmed scene lights) is a manual toggle.
+// Each editor light has both a visual icon (octahedron + core sphere) and an
+// active THREE.PointLight that renders the realtime preview.
 
 import * as THREE from 'three';
 import { state } from '../state.js';
@@ -11,17 +12,13 @@ const S = WORLD_SCALE;
 // Light icon mesh storage: Map<lightId, THREE.Group>
 export const lightMeshes = new Map();
 
-// Real-time Three.js PointLight storage (only populated when preview is on)
+// Active THREE.PointLight per editor light: Map<lightId, THREE.PointLight>
 const realtimeLights = new Map();
-
-// Stored scene light intensities for restore
-let sceneLightsBackup = null;
 
 function colorToHex(c) {
     return new THREE.Color(c.r, c.g, c.b).getHex();
 }
 
-// Build the visual icon for a light (octahedron + core sphere). No PointLight here.
 export function rebuildLight(light) {
     const old = lightMeshes.get(light.id);
     if (old) {
@@ -55,21 +52,26 @@ export function rebuildLight(light) {
     lightMeshes.set(light.id, group);
     scene.add(group);
 
-    // If realtime preview is on, also update/create the PointLight for this light
-    if (state.realtimePreview) {
-        const oldRT = realtimeLights.get(light.id);
-        if (oldRT) scene.remove(oldRT);
-
-        const rtLight = new THREE.PointLight(
-            new THREE.Color(light.color.r, light.color.g, light.color.b),
-            light.intensity,
-            light.range * S,
-            2,
-        );
-        rtLight.position.set(light.x * S, light.y * S, light.z * S);
-        realtimeLights.set(light.id, rtLight);
-        scene.add(rtLight);
+    const oldRT = realtimeLights.get(light.id);
+    if (oldRT) {
+        oldRT.shadow.map?.dispose();
+        oldRT.shadow.map = null;
+        scene.remove(oldRT);
     }
+
+    const rtLight = new THREE.PointLight(
+        new THREE.Color(light.color.r, light.color.g, light.color.b),
+        light.intensity,
+        light.range * S,
+        2,
+    );
+    rtLight.position.set(light.x * S, light.y * S, light.z * S);
+    rtLight.castShadow = light.castShadow && light.enabled;
+    rtLight.visible = light.enabled;
+    rtLight.shadow.mapSize.set(512, 512);
+    rtLight.shadow.bias = -0.001;
+    realtimeLights.set(light.id, rtLight);
+    scene.add(rtLight);
 }
 
 export function rebuildAllLights() {
@@ -81,6 +83,13 @@ export function rebuildAllLights() {
         });
     }
     lightMeshes.clear();
+
+    for (const [, rt] of realtimeLights) {
+        rt.shadow.map?.dispose();
+        rt.shadow.map = null;
+        scene.remove(rt);
+    }
+    realtimeLights.clear();
 
     for (const light of state.pointLights) {
         rebuildLight(light);
@@ -100,8 +109,22 @@ export function removeLightMesh(lightId) {
 
     const rtLight = realtimeLights.get(lightId);
     if (rtLight) {
+        rtLight.shadow.map?.dispose();
+        rtLight.shadow.map = null;
         scene.remove(rtLight);
         realtimeLights.delete(lightId);
+    }
+}
+
+// Toggle a light's shadow casting without rebuilding its PointLight.
+// Disposes the shadow map when turning off so old shadows don't linger in some drivers.
+export function updateLightShadowFlag(light) {
+    const rt = realtimeLights.get(light.id);
+    if (!rt) return;
+    rt.castShadow = light.castShadow && light.enabled;
+    if (!rt.castShadow) {
+        rt.shadow.map?.dispose();
+        rt.shadow.map = null;
     }
 }
 
@@ -117,54 +140,4 @@ export function getLightPickTargets() {
         }
     }
     return targets;
-}
-
-// ============================================================
-// Realtime preview toggle — manual, no automatic behavior
-// ============================================================
-
-export function setRealtimePreview(enabled) {
-    state.realtimePreview = enabled;
-
-    if (enabled) {
-        // Create PointLights for all lights
-        for (const light of state.pointLights) {
-            const rtLight = new THREE.PointLight(
-                new THREE.Color(light.color.r, light.color.g, light.color.b),
-                light.intensity,
-                light.range * S,
-                2,
-            );
-            rtLight.position.set(light.x * S, light.y * S, light.z * S);
-            realtimeLights.set(light.id, rtLight);
-            scene.add(rtLight);
-        }
-
-        // Dim scene lights
-        const sceneLights = scene.children.filter(c =>
-            c.isAmbientLight || c.isDirectionalLight || c.isHemisphereLight
-        );
-        sceneLightsBackup = sceneLights.map(l => ({ light: l, intensity: l.intensity }));
-        for (const entry of sceneLightsBackup) {
-            if (entry.light.isAmbientLight) {
-                entry.light.intensity = 0.08;
-            } else {
-                entry.light.intensity = 0;
-            }
-        }
-    } else {
-        // Remove all PointLights
-        for (const [, rtLight] of realtimeLights) {
-            scene.remove(rtLight);
-        }
-        realtimeLights.clear();
-
-        // Restore scene lights
-        if (sceneLightsBackup) {
-            for (const entry of sceneLightsBackup) {
-                entry.light.intensity = entry.intensity;
-            }
-            sceneLightsBackup = null;
-        }
-    }
 }

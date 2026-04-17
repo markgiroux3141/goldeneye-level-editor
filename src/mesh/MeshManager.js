@@ -18,7 +18,7 @@ export { csgRegionMeshes } from './csgMesh.js';
 export { rebuildPlatform, rebuildAllPlatforms, removePlatformMesh } from './platformMesh.js';
 export { rebuildStairRun, rebuildAllStairRuns, rebuildConnectedStairRuns } from './stairRunMesh.js';
 export { rebuildTerrainMesh, rebuildTerrainWalls, rebuildAllTerrain, generateTerrainMesh } from './terrainMesh.js';
-export { rebuildLight, rebuildAllLights, removeLightMesh, updateLightSelection, getLightPickTargets, setRealtimePreview } from './lightMesh.js';
+export { rebuildLight, rebuildAllLights, removeLightMesh, updateLightSelection, getLightPickTargets, updateLightShadowFlag } from './lightMesh.js';
 export { rebuildAllCSG, rebuildAffectedRegions, removeCSGRegion } from './csgMesh.js';
 export { rebuildCsgStair, rebuildAllCsgStairs, removeCsgStairMesh, csgStairMeshes } from './csgStairMesh.js';
 

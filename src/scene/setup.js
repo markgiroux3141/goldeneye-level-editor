@@ -1,9 +1,13 @@
 // Three.js scene, renderer, camera, lighting
 
 import * as THREE from 'three';
-import { FOG_NEAR, FOG_FAR, INDOOR_BG_COLOR } from '../core/constants.js';
+import { FOG_NEAR, FOG_FAR, INDOOR_BG_COLOR, DEFAULT_AMBIENT_INTENSITY } from '../core/constants.js';
 
-export let scene, renderer, camera, gridHelper;
+export let scene, renderer, camera, gridHelper, ambientLight;
+
+export function setAmbientIntensity(v) {
+    if (ambientLight) ambientLight.intensity = v;
+}
 
 export function initScene() {
     scene = new THREE.Scene();
@@ -16,14 +20,12 @@ export function initScene() {
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     document.body.appendChild(renderer.domElement);
 
-    // Lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(10, 20, 10);
-    scene.add(dirLight);
-    scene.add(new THREE.HemisphereLight(0x8888ff, 0x444422, 0.3));
+    ambientLight = new THREE.AmbientLight(0xffffff, DEFAULT_AMBIENT_INTENSITY);
+    scene.add(ambientLight);
 
     // Ground grid — 1 line per WT (0.25m spacing)
     gridHelper = new THREE.GridHelper(100, 400, 0x004400, 0x002200);

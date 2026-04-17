@@ -11,7 +11,7 @@ import { subdivideGeometry } from './subdivide.js';
 
 const S = WORLD_SCALE;
 
-// Ambient base is read from state.bakeAmbient at bake time
+// Ambient base is read from state.ambientIntensity at bake time
 
 // Fixed subdivision level: each quad becomes NxN sub-quads.
 // N=2 is a good balance: 4x more vertices for smoother gradients, fast bake.
@@ -186,7 +186,7 @@ export function bakeAllLighting(aoSamples = 32) {
     const occluders = getOccluders();
 
     // Bake lighting onto subdivided platform/stair geometry.
-    const ambient = state.bakeAmbient;
+    const ambient = state.ambientIntensity;
     for (const [id, mesh] of platformMeshes) {
         bakeMeshAndChildren(mesh, occluders, lights, aoSamples, 'plat_' + id, ambient);
     }

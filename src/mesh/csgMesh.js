@@ -15,6 +15,12 @@ import { getCSGMaterialsForScheme } from '../scene/materials.js';
 // Per-region mesh storage: Map<regionId, { mesh, faceIds, lastEvalMs, region }>
 export const csgRegionMeshes = new Map();
 
+// Pending debounced edges-geometry timers, keyed by regionId. Edges are cosmetic
+// overlay — recomputing them on every push/pull costs ~60ms at scale. We defer
+// until the user pauses (EDGES_DEBOUNCE_MS) so edits feel snappy.
+const pendingEdgesTimers = new Map();
+const EDGES_DEBOUNCE_MS = 150;
+
 // ─── Stable region tracking ──────────────────────────────────────────
 // Persistent maps that survive across incremental rebuilds.
 // Only reset by rebuildAllCSG() (undo / load / delete).
@@ -29,13 +35,55 @@ const _gridMaterial = new THREE.MeshStandardMaterial({
 });
 
 function disposeRegion(data) {
+    const regionId = data.region?.id;
+    if (regionId != null) {
+        const t = pendingEdgesTimers.get(regionId);
+        if (t) { clearTimeout(t); pendingEdgesTimers.delete(regionId); }
+    }
     scene.remove(data.mesh);
     if (data.mesh.geometry) data.mesh.geometry.dispose();
+    for (const child of data.mesh.children) {
+        if (child.isLineSegments && child.geometry) child.geometry.dispose();
+    }
+}
+
+// Schedule edges wireframe overlay for a region after the user pauses editing.
+// Cancels any prior pending update for the same region.
+function scheduleEdgesUpdate(regionId) {
+    const prev = pendingEdgesTimers.get(regionId);
+    if (prev) clearTimeout(prev);
+    const timer = setTimeout(() => {
+        pendingEdgesTimers.delete(regionId);
+        const data = csgRegionMeshes.get(regionId);
+        if (!data) return;
+        const { mesh } = data;
+        // Remove any existing edges child before recomputing.
+        for (let i = mesh.children.length - 1; i >= 0; i--) {
+            const c = mesh.children[i];
+            if (c.isLineSegments) {
+                mesh.remove(c);
+                if (c.geometry) c.geometry.dispose();
+            }
+        }
+        const geo = mesh.geometry;
+        if (!geo) return;
+        if (state.viewMode === 'textured') {
+            const edgesGeo = new THREE.EdgesGeometry(geo, 30);
+            const edgesMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.15 });
+            mesh.add(new THREE.LineSegments(edgesGeo, edgesMat));
+        } else {
+            const edgesGeo = new THREE.EdgesGeometry(geo);
+            mesh.add(new THREE.LineSegments(edgesGeo, new THREE.LineBasicMaterial({ color: 0x333333 })));
+        }
+    }, EDGES_DEBOUNCE_MS);
+    pendingEdgesTimers.set(regionId, timer);
 }
 
 // ─── Build mesh for a single region ──────────────────────────────────
 function buildRegionMesh(region) {
-    const { geometry: rawGeo, faceIds: rawFaceIds, timeMs } = region.evaluateBrushes();
+    const tBuild0 = performance.now();
+    const { geometry: rawGeo, faceIds: rawFaceIds, timeMs, cached } = region.evaluateBrushes();
+    const tAfterEval = performance.now();
 
     let finalGeo, finalFaceIds, material;
     if (state.viewMode === 'textured') {
@@ -54,29 +102,41 @@ function buildRegionMesh(region) {
             finalGeo.setAttribute('color', new THREE.Float32BufferAttribute(whiteColors, 3));
         }
     }
+    const tAfterUV = performance.now();
 
     const mesh = new THREE.Mesh(finalGeo, material);
     mesh.userData = { regionId: region.id, isCSG: true };
+    // CSG region meshes contain both interior walls AND the outer shell brush
+    // (brushId === -1) that wraps the editor space. If the shell cast shadows
+    // it would block all light below it. Cheapest fix: CSG receives but doesn't
+    // cast in the editor preview. The runtime renderer gets correct shadows.
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    const tAfterMesh = performance.now();
 
-    // Edge wireframe overlay
-    if (state.viewMode === 'textured') {
-        const edgesGeo = new THREE.EdgesGeometry(finalGeo, 30);
-        const edgesMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.15 });
-        mesh.add(new THREE.LineSegments(edgesGeo, edgesMat));
-    } else {
-        const edges = new THREE.EdgesGeometry(finalGeo);
-        mesh.add(new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x333333 })));
-    }
+    // Edge wireframe overlay — defer until the user pauses. Recomputing on
+    // every keystroke cost ~60ms at 37k tris; the overlay is cosmetic.
+    const tAfterEdges = performance.now();
 
     csgRegionMeshes.set(region.id, { mesh, faceIds: finalFaceIds, lastEvalMs: timeMs, region });
     scene.add(mesh);
+    scheduleEdgesUpdate(region.id);
+
+    const buildTotal = performance.now() - tBuild0;
+    const source = cached ? 'cached' : 'wasm';
+    const bcount = region.brushes.length + region.bakedBrushes.length;
+    const triCount = finalGeo.index ? finalGeo.index.count / 3 : 0;
+    const uvMs = (tAfterUV - tAfterEval).toFixed(1);
+    const meshMs = (tAfterMesh - tAfterUV).toFixed(1);
+    const edgesMs = (tAfterEdges - tAfterMesh).toFixed(1);
+    console.log(`[CSG] region ${region.id}: ${bcount} brushes, ${triCount} tris | eval ${timeMs.toFixed(1)}ms (${source}) | uv ${uvMs}ms | mesh ${meshMs}ms | edges ${edgesMs}ms | total ${buildTotal.toFixed(1)}ms`);
 }
 
 // ─── Full rebuild ────────────────────────────────────────────────────
 // Used by undo, load, delete, and any change that may alter clustering.
 export function rebuildAllCSG(brushes = state.csg.brushes) {
-    // Invalidate baked lighting
-    if (state.bakedLighting) state.bakedLighting = false;
+    const tAll0 = performance.now();
+    console.log(`[CSG] === FULL REBUILD start (${brushes.length} brushes) ===`);
 
     // Tear down all existing region meshes
     for (const [, data] of csgRegionMeshes) disposeRegion(data);
@@ -89,7 +149,9 @@ export function rebuildAllCSG(brushes = state.csg.brushes) {
     if (brushes.length === 0) return;
 
     // Cluster brushes into connected regions
+    const tCluster0 = performance.now();
     const regions = clusterBrushes(brushes);
+    const clusterMs = performance.now() - tCluster0;
 
     for (const region of regions) {
         // Assign stable IDs
@@ -103,16 +165,31 @@ export function rebuildAllCSG(brushes = state.csg.brushes) {
 
         buildRegionMesh(region);
     }
+
+    const totalMs = performance.now() - tAll0;
+    console.log(`[CSG] === FULL REBUILD end: ${regions.length} regions, cluster ${clusterMs.toFixed(1)}ms, total ${totalMs.toFixed(1)}ms ===`);
 }
 
 // ─── Incremental rebuild ─────────────────────────────────────────────
 // Only re-evaluates regions that contain the given brush IDs.
 // All other region meshes stay untouched in the scene.
 export function rebuildAffectedRegions(brushIds) {
+    const tIncr0 = performance.now();
+    console.log(`[CSG] --- incr rebuild start: brushIds=[${(brushIds || []).join(',')}] ---`);
     if (!brushIds || brushIds.length === 0) { rebuildAllCSG(); return; }
 
-    // Invalidate baked lighting
-    if (state.bakedLighting) state.bakedLighting = false;
+    // Auto-assign any unmapped brush ids. Push/pull/extrude create sub-face
+    // brushes without pre-registering them — without this, any such edit used
+    // to silently fall back to a full rebuild (O(n²) reclustering on every
+    // keystroke at scale).
+    const brushById = new Map();
+    for (const b of state.csg.brushes) brushById.set(b.id, b);
+    for (const bid of brushIds) {
+        if (brushToRegion.has(bid)) continue;
+        const brush = brushById.get(bid);
+        if (!brush) continue;
+        if (assignBrushToRegion(brush)) return;
+    }
 
     // Collect unique dirty region IDs
     const dirtyRegionIds = new Set();
@@ -136,12 +213,17 @@ export function rebuildAffectedRegions(brushIds) {
         // Rebuild just this region
         buildRegionMesh(region);
     }
+
+    const totalMs = performance.now() - tIncr0;
+    console.log(`[CSG] --- incr rebuild end: ${dirtyRegionIds.size}/${regionMap.size} regions, total ${totalMs.toFixed(1)}ms ---`);
 }
 
 // ─── Brush-to-region assignment (for new brushes) ────────────────────
 // O(n) scan: test new brush against all existing brushes to find which
 // region(s) it touches, then add it to that region. If it touches
 // multiple regions, merge them. If none, create a new region.
+// Returns true when a full rebuildAllCSG was triggered internally so callers
+// can short-circuit and avoid double work.
 export function assignBrushToRegion(brush) {
     const touchedRegionIds = new Set();
 
@@ -165,7 +247,7 @@ export function assignBrushToRegion(brush) {
         region.updateShell();
         regionMap.set(rid, region);
         brushToRegion.set(brush.id, rid);
-        return;
+        return false;
     }
 
     if (touchedRegionIds.size === 1) {
@@ -176,7 +258,7 @@ export function assignBrushToRegion(brush) {
             region.brushes.push(brush);
             brushToRegion.set(brush.id, rid);
         }
-        return;
+        return false;
     }
 
     // Touches multiple regions — merge them into the first
@@ -202,7 +284,7 @@ export function assignBrushToRegion(brush) {
             primaryRegion.brushes.push(brush);
             brushToRegion.set(brush.id, primaryRid);
             rebuildAllCSG();
-            return;
+            return true;
         }
 
         // Dispose the merged region's mesh
@@ -214,6 +296,7 @@ export function assignBrushToRegion(brush) {
 
     primaryRegion.brushes.push(brush);
     brushToRegion.set(brush.id, primaryRid);
+    return false;
 }
 
 // ─── Direct brush-to-region registration (no overlap scan) ──────────

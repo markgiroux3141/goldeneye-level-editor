@@ -15,14 +15,30 @@ Everything is quantized to wall thickness units (1 WT = 0.25m in world space).
 
 ## Running
 
-Requires a local HTTP server (ES modules don't work from `file://`).
+Requires Node.js and Python 3. ES modules don't work from `file://`, so a local HTTP server is needed.
+
+Two terminals:
+
+**Terminal 1 — bundle the JS (watch mode):**
 
 ```bash
-cd "GoldenEye Level Editor"
-python -m http.server 8080
+npm install          # first time only
+npm run dev
 ```
 
-Open http://localhost:8080
+esbuild watches `src/` and rebuilds `dist/bundle.js` on every change. The CSG WASM is prebuilt and committed under `src/core/csg/wasm/` — no Rust toolchain needed for normal use.
+
+**Terminal 2 — serve the files:**
+
+```bash
+python dev-server.py 8765
+```
+
+Uses the repo's `dev-server.py` (no-cache headers + correct `.wasm` MIME type). Plain `python -m http.server` won't serve WASM correctly.
+
+Open http://localhost:8765
+
+**Shortcut (Windows):** double-click `run-dev.bat` at the project root to launch both terminals in one go.
 
 ## Controls
 

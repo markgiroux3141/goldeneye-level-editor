@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "ambient": {
+    "intensity": 0.2
+  },
+  "pointLights": [
+    {
+      "id": 1,
+      "x": 43,
+      "y": -20,
+      "z": 46,
+      "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1
+      },
+      "intensity": 5,
+      "range": 20,
+      "enabled": true,
+      "castShadow": true
+    },
+    {
+      "id": 2,
+      "x": 23,
+      "y": -28,
+      "z": 18,
+      "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1
+      },
+      "intensity": 5,
+      "range": 20,
+      "enabled": true,
+      "castShadow": true
+    },
+    {
+      "id": 3,
+      "x": 14,
+      "y": -12,
+      "z": 44,
+      "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1
+      },
+      "intensity": 5,
+      "range": 20,
+      "enabled": true,
+      "castShadow": true
+    },
+    {
+      "id": 4,
+      "x": 13,
+      "y": 6,
+      "z": 12,
+      "color": {
+        "r": 1,
+        "g": 1,
+        "b": 1
+      },
+      "intensity": 5,
+      "range": 20,
+      "enabled": true,
+      "castShadow": true
+    }
+  ]
+}

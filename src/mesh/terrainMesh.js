@@ -23,6 +23,8 @@ export function rebuildTerrainMesh(terrain) {
     const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData = { terrainId: terrain.id };
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
 
     const wire = new THREE.WireframeGeometry(geometry);
     const wireframe = new THREE.LineSegments(wire, new THREE.LineBasicMaterial({ color: 0x000000 }));
@@ -51,6 +53,8 @@ export function rebuildTerrainWalls(terrain) {
     const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData = { terrainWallId: terrain.id };
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
 
     terrainWallMeshes.set(terrain.id, mesh);
     scene.add(mesh);

@@ -7,7 +7,6 @@ import { state } from '../state.js';
 import { buildCsgStairGeometry } from '../geometry/csgStairGeometry.js';
 import { getWallMaterial, getTexturedMaterialArrayForScheme } from '../scene/materials.js';
 import { scene } from '../scene/setup.js';
-import { reapplyBakedColors } from '../lighting/bakedColorStore.js';
 
 // CSG stair mesh storage: Map<stairDescriptorId, THREE.Mesh>
 export const csgStairMeshes = new Map();
@@ -37,6 +36,8 @@ export function rebuildCsgStair(descriptor) {
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData = { csgStairId: descriptor.id };
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
 
     const edges = new THREE.EdgesGeometry(geometry);
     const wireframe = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x333333 }));
@@ -44,11 +45,6 @@ export function rebuildCsgStair(descriptor) {
 
     csgStairMeshes.set(descriptor.id, mesh);
     scene.add(mesh);
-
-    // Re-apply baked lighting if active
-    if (state.bakedLighting) {
-        reapplyBakedColors('csgstair_' + descriptor.id, geometry);
-    }
 }
 
 export function removeCsgStairMesh(id) {

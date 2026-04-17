@@ -13,6 +13,13 @@ function brushToInput(b) {
     return { id: b.id, op: b.op, x: b.x, y: b.y, z: b.z, w: b.w, h: b.h, d: b.d, taper: b.taper };
 }
 
+// Memoize WASM evaluation by input JSON. Any rebuildAllCSG triggered by an
+// unrelated edit (delete, load, cross-region merge) re-serializes every
+// region — regions whose input is unchanged hit the cache and skip the WASM
+// call entirely. Simple FIFO eviction; 128 ≈ a few MB of typed-array data.
+const WASM_CACHE_LIMIT = 128;
+const wasmResultCache = new Map();
+
 export class CSGRegion {
     constructor(id) {
         this.id = id;
@@ -67,21 +74,34 @@ export class CSGRegion {
             brushes: allBrushes.map(brushToInput),
         });
 
-        const result = evaluateRegionWasm(regionJSON, WORLD_SCALE);
-
-        const positions = result.get_positions();
-        const normals = result.get_normals();
-        const indices = result.get_indices();
+        let positions, normals, indices;
+        let wasCached = true;
+        const cached = wasmResultCache.get(regionJSON);
+        if (cached) {
+            positions = cached.positions;
+            normals = cached.normals;
+            indices = cached.indices;
+        } else {
+            wasCached = false;
+            const result = evaluateRegionWasm(regionJSON, WORLD_SCALE);
+            positions = result.get_positions();
+            normals = result.get_normals();
+            indices = result.get_indices();
+            result.free();
+            if (wasmResultCache.size >= WASM_CACHE_LIMIT) {
+                wasmResultCache.delete(wasmResultCache.keys().next().value);
+            }
+            wasmResultCache.set(regionJSON, { positions, normals, indices });
+        }
 
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
         geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-        result.free();
 
         const elapsed = performance.now() - t0;
         const faceIds = buildFaceMap(geometry, [this.shell, ...allBrushes]);
-        return { geometry, timeMs: elapsed, faceIds };
+        return { geometry, timeMs: elapsed, faceIds, cached: wasCached };
     }
 
     // Merge all unbaked brushes into the baked set, then clear the unbaked list.

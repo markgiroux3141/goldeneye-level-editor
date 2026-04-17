@@ -97,14 +97,16 @@ export function updateHUD(camera) {
             if (colorInput && colorInput !== document.activeElement) colorInput.value = hex;
             if (intensityInput && intensityInput !== document.activeElement) intensityInput.value = light.intensity;
             if (rangeInput && rangeInput !== document.activeElement) rangeInput.value = light.range;
+            const shadowInput = document.getElementById('light-cast-shadow');
+            if (shadowInput && shadowInput !== document.activeElement) shadowInput.checked = !!light.castShadow;
             const ambientInput = document.getElementById('light-ambient');
-            if (ambientInput && ambientInput !== document.activeElement) ambientInput.value = state.bakeAmbient;
+            if (ambientInput && ambientInput !== document.activeElement) ambientInput.value = state.ambientIntensity;
         } else {
-            lines.push(`Click to place light`);
+            lines.push(`L=place light at camera, or click a surface`);
             // Still show light settings for ambient even when no light selected
             if (lightSettingsEl) lightSettingsEl.style.display = '';
         }
-        lines.push(`Lights: ${state.pointLights.length}  Ambient: ${state.bakeAmbient}`);
+        lines.push(`Lights: ${state.pointLights.length}  Ambient: ${state.ambientIntensity}`);
     } else if (state.tool === 'platform') {
         if (state.platformPhase === 'idle') {
             lines.push(`Click to place or select platform`);

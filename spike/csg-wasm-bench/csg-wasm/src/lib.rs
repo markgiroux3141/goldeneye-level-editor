@@ -128,14 +128,74 @@ fn brush_to_polygons(b: &BrushInput, ws: f32) -> Vec<Polygon> {
 
 // ─── CSG Evaluation ─────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
+struct Aabb {
+    min: [f32; 3],
+    max: [f32; 3],
+}
+
+impl Aabb {
+    fn from_brush(b: &BrushInput, ws: f32) -> Self {
+        let ws64 = ws as f64;
+        // Taper only insets face vertices; the raw box bounds are still a
+        // conservative AABB, so the tapered geometry is always contained.
+        Aabb {
+            min: [
+                (b.x * ws64) as f32,
+                (b.y * ws64) as f32,
+                (b.z * ws64) as f32,
+            ],
+            max: [
+                ((b.x + b.w) * ws64) as f32,
+                ((b.y + b.h) * ws64) as f32,
+                ((b.z + b.d) * ws64) as f32,
+            ],
+        }
+    }
+
+    fn intersects(&self, other: &Aabb) -> bool {
+        self.min[0] <= other.max[0]
+            && self.max[0] >= other.min[0]
+            && self.min[1] <= other.max[1]
+            && self.max[1] >= other.min[1]
+            && self.min[2] <= other.max[2]
+            && self.max[2] >= other.min[2]
+    }
+
+    fn union(&self, other: &Aabb) -> Aabb {
+        Aabb {
+            min: [
+                self.min[0].min(other.min[0]),
+                self.min[1].min(other.min[1]),
+                self.min[2].min(other.min[2]),
+            ],
+            max: [
+                self.max[0].max(other.max[0]),
+                self.max[1].max(other.max[1]),
+                self.max[2].max(other.max[2]),
+            ],
+        }
+    }
+}
+
 fn evaluate(shell: &BrushInput, brushes: &[BrushInput], world_scale: f32) -> Vec<Polygon> {
     let mut result = brush_to_polygons(shell, world_scale);
+    // Accumulator AABB — grows with unions, subtracts never grow it, so this
+    // stays a correct upper bound for early-rejecting non-overlapping brushes.
+    let mut acc_aabb = Aabb::from_brush(shell, world_scale);
 
     let mut i = 0;
     while i < brushes.len() {
         let is_subtract = brushes[i].op == "subtract";
+        let brush_aabb = Aabb::from_brush(&brushes[i], world_scale);
 
         if is_subtract {
+            // Disjoint subtract is a no-op — skip the BSP build entirely.
+            if !brush_aabb.intersects(&acc_aabb) {
+                i += 1;
+                continue;
+            }
+
             // Look ahead for consecutive subtractive run
             let mut run_end = i + 1;
             while run_end < brushes.len() && brushes[run_end].op == "subtract" {
@@ -144,13 +204,26 @@ fn evaluate(shell: &BrushInput, brushes: &[BrushInput], world_scale: f32) -> Vec
             let run_len = run_end - i;
 
             if run_len >= 3 {
-                // Pre-merge: union all brushes in run, then subtract once
-                let mut merged = brush_to_polygons(&brushes[i], world_scale);
-                for j in (i + 1)..run_end {
+                // Pre-merge: union every overlapping brush in the run, then
+                // subtract once. Non-overlapping brushes are dropped outright.
+                let mut merged: Vec<Polygon> = Vec::new();
+                let mut started = false;
+                for j in i..run_end {
+                    let ja = Aabb::from_brush(&brushes[j], world_scale);
+                    if !ja.intersects(&acc_aabb) {
+                        continue;
+                    }
                     let polys = brush_to_polygons(&brushes[j], world_scale);
-                    merged = csg_union(merged, polys);
+                    if !started {
+                        merged = polys;
+                        started = true;
+                    } else {
+                        merged = csg_union(merged, polys);
+                    }
                 }
-                result = csg_subtract(result, merged);
+                if started {
+                    result = csg_subtract(result, merged);
+                }
                 i = run_end;
                 continue;
             }
@@ -159,8 +232,13 @@ fn evaluate(shell: &BrushInput, brushes: &[BrushInput], world_scale: f32) -> Vec
         let polys = brush_to_polygons(&brushes[i], world_scale);
         if is_subtract {
             result = csg_subtract(result, polys);
+        } else if !brush_aabb.intersects(&acc_aabb) {
+            // Disjoint union — concatenate polygons directly; no BSP needed.
+            result.extend(polys);
+            acc_aabb = acc_aabb.union(&brush_aabb);
         } else {
             result = csg_union(result, polys);
+            acc_aabb = acc_aabb.union(&brush_aabb);
         }
         i += 1;
     }

@@ -1,15 +1,21 @@
 // main.js — Three.js viewer with toggle controls for shadow lighting spike.
+// Baking is performed in Rust via lighting-wasm.
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { buildTestScene, defaultLights } from './geometry.js';
-import { bakeNone, bakeUniform, bakeAdaptive, bakeStencilAdaptive, countTriangles } from './lightBaker.js';
+import { loadGLBScene } from './glbSceneLoader.js';
+import initWasm, { LightingBaker } from '../lighting-wasm/pkg/lighting_wasm.js';
+
+// --- WASM init ---
+await initWasm();
 
 // --- Scene setup ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
 
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
 camera.position.set(8, 18, 28);
 camera.lookAt(2, 2, 0);
 
@@ -22,164 +28,359 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(2, 2, 0);
 controls.update();
 
-// --- Build scene geometry ---
-const sceneData = buildTestScene();
-const lights = defaultLights();
+// --- Transform gizmo for dragging lights ---
+const transformControls = new TransformControls(camera, renderer.domElement);
+transformControls.setMode('translate');
+transformControls.setSize(0.75);
+scene.add(transformControls.getHelper ? transformControls.getHelper() : transformControls);
+let selectedLightIndex = -1;
+let suppressClick = false;
 
-// Material: vertex colors, no real-time lighting
-// DoubleSide because splitTrisAtAxis can flip triangle winding
+transformControls.addEventListener('dragging-changed', (e) => {
+    controls.enabled = !e.value;
+    if (!e.value && selectedLightIndex !== -1) {
+        // Drag ended — commit position, rebake.
+        const entry = lightHelperByIndex.get(selectedLightIndex);
+        const light = sceneData.lights[selectedLightIndex];
+        if (entry && light) {
+            light.x = entry.sphere.position.x;
+            light.y = entry.sphere.position.y;
+            light.z = entry.sphere.position.z;
+            entry.rangeSphere.position.copy(entry.sphere.position);
+            rebuildScene(currentMode);
+        }
+        suppressClick = true;
+        setTimeout(() => { suppressClick = false; }, 0);
+    }
+});
+// Keep the range-sphere halo following the handle while dragging.
+transformControls.addEventListener('objectChange', () => {
+    if (selectedLightIndex === -1) return;
+    const entry = lightHelperByIndex.get(selectedLightIndex);
+    if (entry) entry.rangeSphere.position.copy(entry.sphere.position);
+});
+
+// --- Shared vertex-color materials ---
 const material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
 const wireMaterial = new THREE.MeshBasicMaterial({
     vertexColors: true, side: THREE.DoubleSide, wireframe: true,
 });
 
-// The meshes currently in the scene
-let roomMesh = null;
-let platformMeshes = [];
-let lightHelpers = [];
-let showWireframe = false;
-
-// Store original (un-modified) geometry sources so each mode gets a fresh copy
-const roomGeoSource = sceneData.room.geometry;
-const platGeoSources = sceneData.platforms.map(p => p.geometry);
-
-function cloneGeo(geo) {
-    const clone = geo.clone();
-    // Clone the color attribute so writes don't affect the source
-    const col = clone.getAttribute('color');
-    clone.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(col.array), 3));
-    return clone;
-}
-
-// --- Occluder meshes for raycasting ---
-// We need Three.js meshes for the raycaster to intersect against.
-// Create "invisible" meshes from the platform geometries.
-function buildOccluderMeshes() {
-    const meshes = [];
-    for (const platGeo of platGeoSources) {
-        const m = new THREE.Mesh(platGeo, new THREE.MeshBasicMaterial({ visible: false }));
-        meshes.push(m);
-        scene.add(m);
+// Composite materials (texture × baked vertex color), keyed by source material UUID.
+const texturedBakeMaterialCache = new Map();
+function getTexturedBakeMaterial(origMat) {
+    if (!origMat || !origMat.map) return material;
+    let m = texturedBakeMaterialCache.get(origMat.uuid);
+    if (!m) {
+        m = new THREE.MeshBasicMaterial({
+            vertexColors: true,
+            side: THREE.DoubleSide,
+            map: origMat.map,
+        });
+        texturedBakeMaterialCache.set(origMat.uuid, m);
     }
-    return meshes;
+    return m;
 }
 
-const occluderMeshes = buildOccluderMeshes();
+// --- State ---
+let sceneData = null;         // { meshes:[{positions, normals, indices, originalMaterial?, aabb}], lights, cameraTarget, cameraPos }
+let sceneMeshes = [];
+let lightHelpers = [];
+let currentMode = 'none';
+let currentSource = 'test';
+let showWireframe = false;
+let showTextures = false;
+let isLoading = false;
 
-// --- Light helpers (small spheres at light positions) ---
+// --- Extract flat arrays from a THREE.BufferGeometry (triangulated) ---
+function extractMeshArrays(geometry) {
+    const pos = geometry.getAttribute('position');
+    let nor = geometry.getAttribute('normal');
+    if (!nor) { geometry.computeVertexNormals(); nor = geometry.getAttribute('normal'); }
+    const uvAttr = geometry.getAttribute('uv');
+    const idxAttr = geometry.getIndex();
+
+    const positions = new Float32Array(pos.array);
+    const normals = new Float32Array(nor.array);
+    const uvs = uvAttr ? new Float32Array(uvAttr.array) : null;
+    let indices;
+    if (idxAttr) {
+        indices = idxAttr.array instanceof Uint32Array ? idxAttr.array : new Uint32Array(idxAttr.array);
+    } else {
+        const count = pos.count;
+        indices = new Uint32Array(count);
+        for (let i = 0; i < count; i++) indices[i] = i;
+    }
+    return { positions, normals, uvs, indices };
+}
+
+function aabbFromPositions(positions) {
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let i = 0; i < positions.length; i += 3) {
+        const x = positions[i], y = positions[i+1], z = positions[i+2];
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+    }
+    return { minX, minY, minZ, maxX, maxY, maxZ };
+}
+
+// --- Scene source loading ---
+function loadTestScene() {
+    const data = buildTestScene();
+    const lights = defaultLights();
+    const meshes = [];
+
+    const roomArrays = extractMeshArrays(data.room.geometry);
+    meshes.push({ ...roomArrays, aabb: aabbFromPositions(roomArrays.positions) });
+
+    for (const p of data.platforms) {
+        const a = extractMeshArrays(p.geometry);
+        meshes.push({ ...a, aabb: p.aabb });
+    }
+
+    return {
+        meshes,
+        lights,
+        cameraTarget: new THREE.Vector3(2, 2, 0),
+        cameraPos: new THREE.Vector3(8, 18, 28),
+    };
+}
+
+async function loadGLBSceneAdapted() {
+    const raw = await loadGLBScene();
+    const meshes = raw.meshes.map(entry => {
+        const a = extractMeshArrays(entry.geometry);
+        return {
+            ...a,
+            aabb: entry.aabb,
+            originalMaterial: entry.originalMaterial,
+            originalGeometry: entry.geometry,
+        };
+    });
+    return {
+        meshes,
+        lights: raw.lights,
+        cameraTarget: raw.cameraTarget,
+        cameraPos: raw.cameraPos,
+    };
+}
+
+async function loadSceneSource(kind) {
+    if (kind === 'glb') return await loadGLBSceneAdapted();
+    return loadTestScene();
+}
+
+// --- Light helpers ---
+// Keyed by light index so we can re-attach the transform gizmo across rebuilds.
+const lightHelperByIndex = new Map();
+
 function buildLightHelpers() {
     for (const h of lightHelpers) scene.remove(h);
     lightHelpers = [];
+    lightHelperByIndex.clear();
 
-    for (const light of lights) {
-        if (!light.enabled) continue;
+    sceneData.lights.forEach((light, idx) => {
+        if (!light.enabled) return;
         const geo = new THREE.SphereGeometry(0.3, 8, 8);
         const mat = new THREE.MeshBasicMaterial({
             color: new THREE.Color(light.color.r, light.color.g, light.color.b),
         });
         const sphere = new THREE.Mesh(geo, mat);
         sphere.position.set(light.x, light.y, light.z);
+        sphere.userData.lightIndex = idx;
+        sphere.userData.isLightHandle = true;
         scene.add(sphere);
         lightHelpers.push(sphere);
 
-        // Range wireframe sphere
         const rangeGeo = new THREE.SphereGeometry(light.range, 16, 12);
         const rangeMat = new THREE.MeshBasicMaterial({
             color: new THREE.Color(light.color.r, light.color.g, light.color.b),
             wireframe: true, transparent: true, opacity: 0.08,
         });
-        const rangeSphere = new THREE.Mesh(rangeGeo, rangeMat);
-        rangeSphere.position.copy(sphere.position);
-        scene.add(rangeSphere);
-        lightHelpers.push(rangeSphere);
+        const rs = new THREE.Mesh(rangeGeo, rangeMat);
+        rs.position.copy(sphere.position);
+        scene.add(rs);
+        lightHelpers.push(rs);
+
+        lightHelperByIndex.set(idx, { sphere, rangeSphere: rs });
+    });
+
+    // Re-attach transform gizmo if a light is still selected and visible.
+    if (selectedLightIndex !== -1) {
+        const entry = lightHelperByIndex.get(selectedLightIndex);
+        if (entry) transformControls.attach(entry.sphere);
+        else { transformControls.detach(); selectedLightIndex = -1; }
     }
 }
 
-// --- Bake modes ---
-let currentMode = 'none';
+// --- Build BufferGeometry from a BakedMesh result. If sourceUvs are provided and
+// the baked vertex count matches the source, they're attached unchanged (valid
+// only when the bake didn't alter topology — i.e. bake_none). ---
+function bakedToGeometry(baked, sourceUvs) {
+    const positions = baked.positions();
+    const normals = baked.normals();
+    const colors = baked.colors();
+    const indices = baked.indices();
+    baked.free();
 
-function clearScene() {
-    if (roomMesh) { scene.remove(roomMesh); roomMesh = null; }
-    for (const m of platformMeshes) scene.remove(m);
-    platformMeshes = [];
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    if (sourceUvs && sourceUvs.length * 3 === positions.length * 2) {
+        geo.setAttribute('uv', new THREE.Float32BufferAttribute(sourceUvs, 2));
+    }
+    geo.setIndex(new THREE.BufferAttribute(indices, 1));
+    return geo;
+}
+
+// --- Serialize lights to JSON for WASM ---
+function lightsToJson(lights) {
+    return JSON.stringify(lights.map(l => ({
+        x: l.x, y: l.y, z: l.z,
+        color: [l.color.r, l.color.g, l.color.b],
+        intensity: l.intensity,
+        range: l.range,
+        enabled: !!l.enabled,
+    })));
 }
 
 function rebuildScene(mode) {
-    clearScene();
+    clearSceneMeshes();
     const t0 = performance.now();
 
-    let roomGeo, platGeos;
-
-    switch (mode) {
-        case 'none': {
-            roomGeo = cloneGeo(roomGeoSource);
-            bakeNone(roomGeo, lights, occluderMeshes);
-            platGeos = platGeoSources.map(g => {
-                const c = cloneGeo(g);
-                bakeNone(c, lights, occluderMeshes);
-                return c;
-            });
-            break;
-        }
-        case 'uniform': {
-            roomGeo = bakeUniform(roomGeoSource, lights, occluderMeshes, 2);
-            platGeos = platGeoSources.map(g => bakeUniform(g, lights, occluderMeshes, 2));
-            break;
-        }
-        case 'adaptive': {
-            roomGeo = bakeAdaptive(cloneGeo(roomGeoSource), lights, occluderMeshes);
-            platGeos = platGeoSources.map(g => bakeAdaptive(cloneGeo(g), lights, occluderMeshes));
-            break;
-        }
-        case 'stencil': {
-            const aabbs = sceneData.platforms.map(p => p.aabb);
-            roomGeo = bakeStencilAdaptive(roomGeoSource, lights, aabbs, occluderMeshes, 0.3);
-            // Platforms don't need stenciling against themselves, just adaptive
-            platGeos = platGeoSources.map(g => bakeAdaptive(cloneGeo(g), lights, occluderMeshes));
-            break;
-        }
+    const baker = new LightingBaker(lightsToJson(sceneData.lights));
+    for (const m of sceneData.meshes) {
+        baker.add_occluder(m.positions, m.indices);
     }
+    baker.build();
+
+    let totalTris = 0;
+    for (let i = 0; i < sceneData.meshes.length; i++) {
+        const m = sceneData.meshes[i];
+        const hasTexture = !!(m.originalMaterial && m.originalMaterial.map);
+
+        // Textures mode requires UVs on the baked geometry; only bake_none preserves
+        // them. Force 'none' when textures are on for textured meshes.
+        const effectiveMode = (showTextures && hasTexture) ? 'none' : mode;
+
+        let baked;
+        switch (effectiveMode) {
+            case 'none':
+                baked = baker.bake_none(m.positions, m.normals, m.indices);
+                break;
+            case 'uniform':
+                baked = baker.bake_uniform(m.positions, m.normals, m.indices, 2);
+                break;
+            case 'adaptive':
+                baked = baker.bake_adaptive(m.positions, m.normals, m.indices);
+                break;
+            case 'stencil': {
+                const otherAabbs = sceneData.meshes
+                    .filter((_, j) => j !== i)
+                    .map(o => o.aabb);
+                baked = baker.bake_stencil(m.positions, m.normals, m.indices, JSON.stringify(otherAabbs), 0.3);
+                break;
+            }
+        }
+
+        // Only attach UVs for bake_none where topology matches the source.
+        const sourceUvs = effectiveMode === 'none' ? m.uvs : null;
+        const geo = bakedToGeometry(baked, sourceUvs);
+
+        let mat;
+        if (showWireframe) mat = wireMaterial;
+        else if (showTextures && hasTexture) mat = getTexturedBakeMaterial(m.originalMaterial);
+        else mat = material;
+
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.userData.bakedGeometry = true;
+        scene.add(mesh);
+        sceneMeshes.push(mesh);
+        totalTris += geo.getIndex().count / 3;
+    }
+
+    baker.free();
 
     const elapsed = (performance.now() - t0).toFixed(1);
-
-    const mat = showWireframe ? wireMaterial : material;
-    roomMesh = new THREE.Mesh(roomGeo, mat);
-    scene.add(roomMesh);
-
-    let totalTris = countTriangles(roomGeo);
-    for (const g of platGeos) {
-        const m = new THREE.Mesh(g, mat);
-        scene.add(m);
-        platformMeshes.push(m);
-        totalTris += countTriangles(g);
-    }
-
     document.getElementById('tri-count').textContent = totalTris;
     document.getElementById('bake-time').textContent = elapsed;
     currentMode = mode;
 }
 
+function clearSceneMeshes() {
+    for (const m of sceneMeshes) {
+        scene.remove(m);
+        // Only dispose geometries we created during bake; leave originalGeometry alone.
+        if (m.userData.bakedGeometry) m.geometry.dispose();
+    }
+    sceneMeshes = [];
+}
+
+// --- Scene source switch ---
+async function switchSceneSource(kind) {
+    if (isLoading || kind === currentSource) return;
+    isLoading = true;
+    setBakeButtonsEnabled(false);
+    document.getElementById('bake-time').textContent = 'loading…';
+
+    try {
+        sceneData = await loadSceneSource(kind);
+        currentSource = kind;
+
+        camera.position.copy(sceneData.cameraPos);
+        controls.target.copy(sceneData.cameraTarget);
+        controls.update();
+
+        buildLightHelpers();
+        rebuildScene(currentMode);
+    } catch (err) {
+        console.error('Failed to load scene:', err);
+        document.getElementById('bake-time').textContent = 'error';
+    } finally {
+        isLoading = false;
+        setBakeButtonsEnabled(true);
+    }
+}
+
 // --- UI ---
-function setActiveButton(id) {
-    document.querySelectorAll('#ui .row:first-child button').forEach(b => b.classList.remove('active'));
+function setActiveButton(groupSelector, id) {
+    document.querySelectorAll(groupSelector + ' button').forEach(b => b.classList.remove('active'));
     document.getElementById(id).classList.add('active');
 }
 
+function setBakeButtonsEnabled(enabled) {
+    ['btn-none', 'btn-uniform', 'btn-adaptive', 'btn-stencil'].forEach(id => {
+        document.getElementById(id).disabled = !enabled;
+    });
+}
+
 document.getElementById('btn-none').addEventListener('click', () => {
-    setActiveButton('btn-none');
+    setActiveButton('#row-bake', 'btn-none');
     rebuildScene('none');
 });
 document.getElementById('btn-uniform').addEventListener('click', () => {
-    setActiveButton('btn-uniform');
+    setActiveButton('#row-bake', 'btn-uniform');
     rebuildScene('uniform');
 });
 document.getElementById('btn-adaptive').addEventListener('click', () => {
-    setActiveButton('btn-adaptive');
+    setActiveButton('#row-bake', 'btn-adaptive');
     rebuildScene('adaptive');
 });
 document.getElementById('btn-stencil').addEventListener('click', () => {
-    setActiveButton('btn-stencil');
+    setActiveButton('#row-bake', 'btn-stencil');
     rebuildScene('stencil');
+});
+
+document.getElementById('btn-source-test').addEventListener('click', () => {
+    setActiveButton('#row-source', 'btn-source-test');
+    switchSceneSource('test');
+});
+document.getElementById('btn-source-glb').addEventListener('click', () => {
+    setActiveButton('#row-source', 'btn-source-glb');
+    switchSceneSource('glb');
 });
 
 document.getElementById('btn-wireframe').addEventListener('click', (e) => {
@@ -188,23 +389,56 @@ document.getElementById('btn-wireframe').addEventListener('click', (e) => {
     rebuildScene(currentMode);
 });
 
-// Light toggles
+document.getElementById('btn-textures').addEventListener('click', (e) => {
+    showTextures = !showTextures;
+    e.target.classList.toggle('active', showTextures);
+    rebuildScene(currentMode);
+});
+
 document.getElementById('btn-light1').addEventListener('click', (e) => {
-    lights[0].enabled = !lights[0].enabled;
-    e.target.classList.toggle('active', !lights[0].enabled);
-    e.target.textContent = lights[0].enabled ? 'Light 1' : 'Light 1 (off)';
+    const l = sceneData.lights[0]; if (!l) return;
+    l.enabled = !l.enabled;
+    e.target.classList.toggle('active', !l.enabled);
+    e.target.textContent = l.enabled ? 'Light 1' : 'Light 1 (off)';
     buildLightHelpers();
     rebuildScene(currentMode);
 });
 document.getElementById('btn-light2').addEventListener('click', (e) => {
-    lights[1].enabled = !lights[1].enabled;
-    e.target.classList.toggle('active', !lights[1].enabled);
-    e.target.textContent = lights[1].enabled ? 'Light 2' : 'Light 2 (off)';
+    const l = sceneData.lights[1]; if (!l) return;
+    l.enabled = !l.enabled;
+    e.target.classList.toggle('active', !l.enabled);
+    e.target.textContent = l.enabled ? 'Light 2' : 'Light 2 (off)';
     buildLightHelpers();
     rebuildScene(currentMode);
 });
 
-// --- Resize ---
+// --- Click-to-select a light handle ---
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+renderer.domElement.addEventListener('pointerdown', (e) => {
+    if (suppressClick || e.button !== 0) return;
+    // Ignore clicks that started on the gizmo itself.
+    if (transformControls.dragging) return;
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+
+    const handles = [];
+    for (const entry of lightHelperByIndex.values()) handles.push(entry.sphere);
+    const hits = raycaster.intersectObjects(handles, false);
+    if (hits.length > 0) {
+        const sphere = hits[0].object;
+        selectedLightIndex = sphere.userData.lightIndex ?? -1;
+        transformControls.attach(sphere);
+    } else {
+        // Click in empty space — deselect only if not clicking gizmo.
+        transformControls.detach();
+        selectedLightIndex = -1;
+    }
+});
+
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -212,10 +446,10 @@ window.addEventListener('resize', () => {
 });
 
 // --- Init ---
+sceneData = loadTestScene();
 buildLightHelpers();
 rebuildScene('none');
 
-// --- Render loop ---
 function animate() {
     requestAnimationFrame(animate);
     controls.update();

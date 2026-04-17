@@ -12,7 +12,8 @@ export class PointLight {
         this.color = { r: 1, g: 1, b: 1 };  // normalized 0-1 RGB
         this.intensity = DEFAULT_LIGHT_INTENSITY;
         this.range = DEFAULT_LIGHT_RANGE;
-        this.enabled = true;    // toggle for bake inclusion
+        this.enabled = true;
+        this.castShadow = true;
     }
 
     toJSON() {
@@ -23,6 +24,7 @@ export class PointLight {
             intensity: this.intensity,
             range: this.range,
             enabled: this.enabled,
+            castShadow: this.castShadow,
         };
     }
 
@@ -32,6 +34,7 @@ export class PointLight {
         l.intensity = j.intensity ?? DEFAULT_LIGHT_INTENSITY;
         l.range = j.range ?? DEFAULT_LIGHT_RANGE;
         l.enabled = j.enabled ?? true;
+        l.castShadow = j.castShadow ?? true;
         return l;
     }
 }

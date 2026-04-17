@@ -1,7 +1,7 @@
 // Main entry point — wires all modules together
 
 import * as THREE from 'three';
-import { initScene, scene, renderer, camera } from './scene/setup.js';
+import { initScene, scene, renderer, camera, setAmbientIntensity } from './scene/setup.js';
 import { initInput, initKeyActions, onKeyDown, isKeyDown, isPointerLocked, consumeMouseDelta, onMiddleClick, reacquirePointerLock, releasePointerLock } from './input/input.js';
 import { updateCamera } from './scene/camera.js';
 import { WORLD_SCALE } from './core/constants.js';
@@ -18,7 +18,7 @@ import { applyBrush } from './terrain/terrainBrush.js';
 import { RadialMenu } from './ui/RadialMenu.js';
 import { buildMenuTree } from './ui/menuConfig.js';
 import { initMenuActions } from './ui/menuActions.js';
-import { terrainMeshes, rebuildPlatform, rebuildConnectedStairRuns, rebuildTerrainWalls, generateTerrainMesh, rebuildAll, rebuildLight, setRealtimePreview, rebuildAllCSG } from './mesh/MeshManager.js';
+import { terrainMeshes, rebuildPlatform, rebuildConnectedStairRuns, rebuildTerrainWalls, generateTerrainMesh, rebuildAll, rebuildLight, updateLightShadowFlag, rebuildAllCSG } from './mesh/MeshManager.js';
 import { BrushDef } from './core/BrushDef.js';
 import { updatePlatformPreview } from './preview/platformPreview.js';
 import { updateTerrainPreview } from './preview/terrainPreview.js';
@@ -144,24 +144,9 @@ onKeyDown((e) => {
     __mark('initMaterials');
 
     // Wire radial menu actions to editor operations.
-    // lightBaker is loaded lazily on first use to keep boot lean.
     initMenuActions({
         showMessage,
         rebuildAll,
-        bakeLighting: async () => {
-            const { bakeAllLighting } = await import('./lighting/lightBaker.js');
-            const elapsed = bakeAllLighting(32);
-            showMessage(`Baked lighting in ${elapsed}s (${state.pointLights.length} lights)`);
-        },
-        clearBake: async () => {
-            const { clearBakedLighting } = await import('./lighting/lightBaker.js');
-            clearBakedLighting();
-            showMessage('Baked lighting cleared');
-        },
-        toggleRealtimePreview: () => {
-            setRealtimePreview(!state.realtimePreview);
-            showMessage('Realtime Preview: ' + (state.realtimePreview ? 'ON' : 'OFF'));
-        },
     });
 
     // Try loading saved level — if found, skip the mode chooser
@@ -285,8 +270,20 @@ onKeyDown((e) => {
 
     const lightAmbientInput = document.getElementById('light-ambient');
     if (lightAmbientInput) {
-        lightAmbientInput.addEventListener('change', () => {
-            state.bakeAmbient = Math.max(0, parseFloat(lightAmbientInput.value) || 1.0);
+        lightAmbientInput.addEventListener('input', () => {
+            const v = Math.max(0, parseFloat(lightAmbientInput.value) || 0);
+            state.ambientIntensity = v;
+            setAmbientIntensity(v);
+        });
+    }
+
+    const lightShadowInput = document.getElementById('light-cast-shadow');
+    if (lightShadowInput) {
+        lightShadowInput.addEventListener('change', () => {
+            const light = getSelectedLight();
+            if (!light) return;
+            light.castShadow = lightShadowInput.checked;
+            updateLightShadowFlag(light);
         });
     }
 

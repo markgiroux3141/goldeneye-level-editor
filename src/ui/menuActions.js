@@ -23,8 +23,6 @@ export function initMenuActions(cbs) {
             handleTextureAction(actionId.slice(8));
         } else if (actionId.startsWith('view:')) {
             handleViewAction(actionId.slice(5));
-        } else if (actionId.startsWith('lighting:')) {
-            handleLightingAction(actionId.slice(9));
         } else if (actionId.startsWith('platform_style:')) {
             handlePlatformStyleAction(actionId.slice(15));
         } else if (actionId === 'file:export_glb') {
@@ -61,28 +59,6 @@ function handleToolAction(toolName) {
         callbacks.showMessage('Click first stair endpoint — Esc to cancel');
     } else if (toolName === 'light') {
         setTool('light');
-    }
-}
-
-function handleLightingAction(action) {
-    if (action === 'bake') {
-        if (callbacks.bakeLighting) {
-            callbacks.bakeLighting();
-        } else {
-            callbacks.showMessage('Bake not yet available');
-        }
-    } else if (action === 'clear') {
-        if (callbacks.clearBake) {
-            callbacks.clearBake();
-        } else {
-            callbacks.showMessage('Clear bake not yet available');
-        }
-    } else if (action === 'toggle_realtime') {
-        if (callbacks.toggleRealtimePreview) {
-            callbacks.toggleRealtimePreview();
-        } else {
-            callbacks.showMessage('Toggle not yet available');
-        }
     }
 }
 

@@ -6,7 +6,6 @@ import { buildStairRunRailingGeometry } from '../geometry/platformGeometry.js';
 import { getPlatformStyle } from '../geometry/platformStyles.js';
 import { getWallMaterial, getTexturedMaterialArrayForScheme, getRailingMaterial, getRailingGridMaterial } from '../scene/materials.js';
 import { scene } from '../scene/setup.js';
-import { reapplyBakedColors } from '../lighting/bakedColorStore.js';
 
 // Stair run mesh storage: Map<stairRunId, THREE.Mesh>
 export const stairRunMeshes = new Map();
@@ -45,6 +44,8 @@ export function rebuildStairRun(run) {
     }
     const mesh = new THREE.Mesh(geometry, material);
     mesh.userData = { stairRunId: run.id };
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
 
     const edges = new THREE.EdgesGeometry(geometry);
     const wireframe = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x333333 }));
@@ -54,31 +55,18 @@ export function rebuildStairRun(run) {
     if (run.railings) {
         const railGeo = buildStairRunRailingGeometry(run, fromPlat, toPlat, state.csg.brushes);
         if (railGeo.getAttribute('position') && railGeo.getAttribute('position').count > 0) {
-            const railMat = state.viewMode === 'textured' ? getRailingMaterial() : getRailingGridMaterial();
+            const textured = state.viewMode === 'textured';
+            const railMat = textured ? getRailingMaterial() : getRailingGridMaterial();
             const railMesh = new THREE.Mesh(railGeo, railMat);
             railMesh.renderOrder = 1;
+            railMesh.castShadow = textured;
+            railMesh.receiveShadow = textured;
             mesh.add(railMesh);
         }
     }
 
     stairRunMeshes.set(run.id, mesh);
     scene.add(mesh);
-
-    // Re-apply baked lighting if active
-    if (state.bakedLighting) {
-        reapplyBakedColors('stair_' + run.id, geometry);
-        // Re-apply to child meshes (railings)
-        for (let i = 0; i < mesh.children.length; i++) {
-            const child = mesh.children[i];
-            if (!child.isMesh || !child.geometry.getAttribute('color')) continue;
-            if (reapplyBakedColors('stair_' + run.id + '_child_' + i, child.geometry)) {
-                if (child.material && !child.material.vertexColors) {
-                    child.material.vertexColors = true;
-                    child.material.needsUpdate = true;
-                }
-            }
-        }
-    }
 }
 
 export function rebuildAllStairRuns() {

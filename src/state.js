@@ -9,7 +9,7 @@ import {
     DEFAULT_PLATFORM_SIZE_X, DEFAULT_PLATFORM_SIZE_Z, DEFAULT_PLATFORM_THICKNESS,
     DEFAULT_STAIR_WIDTH, DEFAULT_STAIR_STEP_HEIGHT, DEFAULT_STAIR_RISE_OVER_RUN,
     DEFAULT_BRUSH_RADIUS, DEFAULT_BRUSH_STRENGTH, DEFAULT_BRUSH_NOISE_SCALE, DEFAULT_BRUSH_NOISE_AMP,
-    DEFAULT_BAKE_AMBIENT, MAX_UNDO,
+    DEFAULT_AMBIENT_INTENSITY, MAX_UNDO,
     DEFAULT_BRACE_WIDTH, DEFAULT_BRACE_DEPTH, DEFAULT_PILLAR_SIZE,
 } from './core/constants.js';
 
@@ -114,10 +114,8 @@ export const state = {
     selectedLightId: null,
     lightPhase: 'idle',        // 'idle' | 'selected' | 'moving'
 
-    // Baked lighting state (transient)
-    bakedLighting: false,
-    realtimePreview: false,   // when true, Three.js PointLights are active + scene lights dimmed
-    bakeAmbient: DEFAULT_BAKE_AMBIENT,
+    // Realtime lighting state (transient)
+    ambientIntensity: DEFAULT_AMBIENT_INTENSITY,
 };
 
 export function saveUndoState() {

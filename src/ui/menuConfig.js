@@ -37,14 +37,6 @@ export function buildMenuTree() {
             ],
         },
         {
-            label: 'Lighting',
-            children: [
-                { label: 'Bake Lighting', action: 'lighting:bake' },
-                { label: 'Clear Bake', action: 'lighting:clear' },
-                { label: 'Realtime Preview', action: 'lighting:toggle_realtime' },
-            ],
-        },
-        {
             label: 'File',
             children: [
                 { label: 'Export GLB', action: 'file:export_glb', hotkey: hotkeyManager.getDisplayKey('export_glb'), hotkeyAction: 'export_glb' },

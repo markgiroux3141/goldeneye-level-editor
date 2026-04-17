@@ -45,7 +45,7 @@ export const MAX_SUBDIVISION = 20;
 export const DEFAULT_LIGHT_INTENSITY = 5.0;
 export const DEFAULT_LIGHT_RANGE = 20;
 export const DEFAULT_LIGHT_Y_OFFSET = 4;
-export const DEFAULT_BAKE_AMBIENT = 1.0;
+export const DEFAULT_AMBIENT_INTENSITY = 1.0;
 
 // Gizmo dimensions
 export const GIZMO_ARROW_LENGTH = 3;

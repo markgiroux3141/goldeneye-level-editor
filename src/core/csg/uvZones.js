@@ -139,6 +139,24 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
     const edge1 = new THREE.Vector3(), edge2 = new THREE.Vector3();
     const normal = new THREE.Vector3();
 
+    // O(1) brush lookup: the per-triangle loop used to do brushes.find(...)
+    // which is O(brushes) per triangle — ~1.4M comparisons at 37k tris × 37 brushes.
+    const brushById = new Map();
+    for (const b of brushes) brushById.set(b.id, b);
+
+    // Fast-path: a tri whose bbox overlaps NO frame can skip every
+    // splitTrisAtAxis call (walls run 6 splits × frames per tri otherwise).
+    const hasAnyFrames = frameAABBs.length > 0;
+    function triOverlapsAnyFrame(minX, maxX, minY, maxY, minZ, maxZ) {
+        for (let i = 0; i < frameAABBs.length; i++) {
+            const db = frameAABBs[i];
+            if (maxX >= db.minX && minX <= db.maxX &&
+                maxY >= db.minY && minY <= db.maxY &&
+                maxZ >= db.minZ && minZ <= db.maxZ) return true;
+        }
+        return false;
+    }
+
     // Per-scheme cache: does the scheme define its own zone-7 brace texture?
     // If yes, brace brushes route every face to zone 7 (white_brace etc).
     // If no, brace brushes fall through to normal wall/floor/ceiling
@@ -171,7 +189,7 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
         const faceId = faceIds[t] || { brushId: 0, axis: 'x', side: 'min', position: 0 };
         const nx = normal.x, ny = normal.y, nz = normal.z;
 
-        const ownerBrush = (faceId.brushId !== 0) ? brushes.find(b => b.id === faceId.brushId) : null;
+        const ownerBrush = (faceId.brushId !== 0) ? brushById.get(faceId.brushId) : null;
         const scheme = ownerBrush ? ownerBrush.schemeKey : 'facility_white_tile';
         const originY = ownerBrush ? ownerBrush.floorY : 0;
 
@@ -186,9 +204,26 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
             continue;
         }
 
+        // Precompute tri bbox once so the fast-path + slow-path both use it.
+        const triMinX = Math.min(vA.x, vB.x, vC.x);
+        const triMaxX = Math.max(vA.x, vB.x, vC.x);
+        const triMinY = Math.min(vA.y, vB.y, vC.y);
+        const triMaxY = Math.max(vA.y, vB.y, vC.y);
+        const triMinZ = Math.min(vA.z, vB.z, vC.z);
+        const triMaxZ = Math.max(vA.z, vB.z, vC.z);
+        const nearAnyFrame = hasAnyFrames && triOverlapsAnyFrame(triMinX, triMaxX, triMinY, triMaxY, triMinZ, triMaxZ);
+
         if (ay >= ax && ay >= az) {
             // Floor or ceiling
             const axis = 'y';
+            const floorOrCeilZone = normal.y > 0 ? 0 : 1;
+
+            // Fast path: no frame touches this tri → emit as plain floor/ceiling.
+            if (!nearAnyFrame) {
+                emitTri(vA.clone(), vB.clone(), vC.clone(), nx, ny, nz, axis, floorOrCeilZone, faceId, scheme);
+                continue;
+            }
+
             if (normal.y > 0) {
                 // Floor — split along doorframe XZ boundaries, classify inside/outside
                 let floorTris = [{ a: vA.clone(), b: vB.clone(), c: vC.clone() }];
@@ -259,6 +294,35 @@ export function assignUVsAndZones(geometry, faceIds, brushes, getMaterialsForSch
                     emitTri(vA.clone(), vB.clone(), vC.clone(), nx, ny, nz, axis, 5, faceId, scheme, false, originY);
                     continue;
                 }
+            }
+
+            // Fast path: wall tri far from every frame — skip all 6 per-frame
+            // splitTrisAtAxis calls and go straight to the vertical zone 2/3
+            // split. This is the dominant case for large levels.
+            if (!nearAnyFrame) {
+                const splitY = (originY + WALL_SPLIT_V) * WORLD_SCALE;
+                if (triMaxY <= splitY) {
+                    emitTri(vA.clone(), vB.clone(), vC.clone(), nx, ny, nz, axis, 2, faceId, scheme, false, originY);
+                } else if (triMinY >= splitY) {
+                    emitTri(vA.clone(), vB.clone(), vC.clone(), nx, ny, nz, axis, 3, faceId, scheme, false, originY);
+                } else {
+                    const verts = [vA.clone(), vB.clone(), vC.clone()];
+                    verts.sort((a, b) => a.y - b.y);
+                    const [lo, mid, hi] = verts;
+                    const pLoHi = lerpAtY(lo, hi, splitY);
+                    if (mid.y <= splitY) {
+                        const pMidHi = lerpAtY(mid, hi, splitY);
+                        emitTri(lo, mid, pLoHi, nx, ny, nz, axis, 2, faceId, scheme, false, originY);
+                        emitTri(mid, pMidHi, pLoHi, nx, ny, nz, axis, 2, faceId, scheme, false, originY);
+                        emitTri(pLoHi, pMidHi, hi, nx, ny, nz, axis, 3, faceId, scheme, false, originY);
+                    } else {
+                        const pLoMid = lerpAtY(lo, mid, splitY);
+                        emitTri(lo, pLoMid, pLoHi, nx, ny, nz, axis, 2, faceId, scheme, false, originY);
+                        emitTri(pLoMid, mid, pLoHi, nx, ny, nz, axis, 3, faceId, scheme, false, originY);
+                        emitTri(mid, hi, pLoHi, nx, ny, nz, axis, 3, faceId, scheme, false, originY);
+                    }
+                }
+                continue;
             }
 
             let wallTris = [{ a: vA.clone(), b: vB.clone(), c: vC.clone() }];
