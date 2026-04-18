@@ -74,7 +74,7 @@ export const state = {
     platformScaleAxis: null,  // 'x' | 'z' — constrained axis during scale
     platformConnectFrom: null, // { platformId, edge, offset } — source edge when connecting
     platformConnectTo: null,   // { type: 'ground' } | { type: 'platform', platformId, edge } — destination
-    simpleStairFrom: null,     // { x, y, z } — first click point for simple stairs
+    simpleStairFrom: null,     // { x, y, z, axis, side } — first click point + face for simple stairs
     platformSizeX: DEFAULT_PLATFORM_SIZE_X,
     platformSizeZ: DEFAULT_PLATFORM_SIZE_Z,
     platformThickness: DEFAULT_PLATFORM_THICKNESS,

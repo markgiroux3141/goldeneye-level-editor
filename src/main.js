@@ -94,9 +94,25 @@ document.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('wheel', (e) => {
     if (state.editorMode === 'terrain') { handleTerrainWheel(e); return; }
-    if (state.tool !== 'csg' || !isPointerLocked()) return;
+    if (!isPointerLocked()) return;
 
     const delta = e.deltaY > 0 ? -1 : 1;
+
+    // Stair placement (simple-stair pre-click + C-connect both phases):
+    // scroll adjusts the stair width preview and keeps the HUD input in sync.
+    if (state.tool === 'platform' && (
+        state.platformPhase === 'simple_stair_from'
+        || state.platformPhase === 'connecting_dst'
+        || state.platformPhase === 'connecting_src'
+    )) {
+        e.preventDefault();
+        state.stairWidth = Math.max(1, Math.min(32, state.stairWidth + delta));
+        const input = document.getElementById('stair-width');
+        if (input) input.value = state.stairWidth;
+        return;
+    }
+
+    if (state.tool !== 'csg') return;
 
     // Brace mode: scroll adjusts width, Shift+scroll adjusts depth
     if (state.csg.braceMode) {

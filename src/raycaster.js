@@ -1,6 +1,27 @@
 // Face picking via raycaster — uses triangle index to faceId lookup
 
 import * as THREE from 'three';
+import { WORLD_SCALE } from './core/constants.js';
+import { state } from './state.js';
+
+// True when the world-space ground-plane hit falls inside a subtract brush's
+// carved interior — i.e., the Y=0 plane cuts through "air" there, not a real
+// floor. Used to reject fake ground hits in pickAny when a CSG room has been
+// carved below Y=0 (pits, sunken areas).
+function groundPointInCarvedAir(point) {
+    const x = point.x / WORLD_SCALE;
+    const y = point.y / WORLD_SCALE;
+    const z = point.z / WORLD_SCALE;
+    for (const b of state.csg.brushes) {
+        if (b.op !== 'subtract') continue;
+        if (x > b.x && x < b.x + b.w
+            && y > b.y && y < b.y + b.h
+            && z > b.z && z < b.z + b.d) {
+            return true;
+        }
+    }
+    return false;
+}
 
 const raycaster = new THREE.Raycaster();
 const screenCenter = new THREE.Vector2(0, 0);
@@ -68,6 +89,22 @@ export function pickPlatform(camera, platformMeshes) {
     return { platformId, point: hit.point };
 }
 
+// Pick whichever platform or stair mesh is closest under the crosshair.
+// Returns { type: 'platform', platformId, point } | { type: 'stair', stairRunId, point } | null.
+export function pickPlatformOrStair(camera, platformMeshes, stairRunMeshes) {
+    raycaster.setFromCamera(screenCenter, camera);
+    const meshes = [];
+    for (const [, m] of platformMeshes) meshes.push(m);
+    for (const [, m] of stairRunMeshes) meshes.push(m);
+    const hits = raycaster.intersectObjects(meshes, false);
+    if (hits.length === 0) return null;
+    const hit = hits[0];
+    const ud = hit.object.userData;
+    if (ud.platformId != null) return { type: 'platform', platformId: ud.platformId, point: hit.point };
+    if (ud.stairRunId != null) return { type: 'stair', stairRunId: ud.stairRunId, point: hit.point };
+    return null;
+}
+
 // Pick a stair run mesh under the crosshair
 // stairRunMeshes: Map<stairRunId, THREE.Mesh>
 export function pickStairRun(camera, stairRunMeshes) {
@@ -130,12 +167,15 @@ export function pickAny(camera, csgRegionMeshes, platformMeshes, lightPickTarget
 
     const hits = raycaster.intersectObjects(allMeshes, false);
 
-    // Also check ground plane
+    // Also check ground plane — but reject it if the Y=0 plane intersects
+    // inside a carved-out CSG volume (e.g. the air above a sunken pit floor).
     let groundHit = null;
     let groundDist = Infinity;
     if (raycaster.ray.intersectPlane(groundPlane, groundIntersect)) {
-        groundDist = groundIntersect.distanceTo(raycaster.ray.origin);
-        groundHit = { type: 'ground', point: groundIntersect.clone() };
+        if (!groundPointInCarvedAir(groundIntersect)) {
+            groundDist = groundIntersect.distanceTo(raycaster.ray.origin);
+            groundHit = { type: 'ground', point: groundIntersect.clone() };
+        }
     }
 
     if (hits.length === 0) return groundHit;
@@ -171,6 +211,47 @@ export function pickAny(camera, csgRegionMeshes, platformMeshes, lightPickTarget
                 return { type: 'csg', regionId, triIndex, ...faceIds[triIndex], point: hit.point };
             }
         }
+    }
+
+    return null;
+}
+
+// Like pickAny, but always returns unified face info: { axis: 'x'|'y'|'z', side: 'min'|'max', position } in WT units.
+// Used by tools that need to align a preview flush with the hit face plane (e.g. simple stairs).
+const _tmpNormal = new THREE.Vector3();
+export function pickFaceAny(camera, csgRegionMeshes, platformMeshes) {
+    const hit = pickAny(camera, csgRegionMeshes, platformMeshes);
+    if (!hit) return null;
+
+    if (hit.type === 'csg') {
+        // axis/side/position already present from faceIds entry
+        return hit;
+    }
+
+    if (hit.type === 'ground') {
+        return { ...hit, axis: 'y', side: 'max', position: 0 };
+    }
+
+    // Platform hit — derive face from raycaster result. We don't have the
+    // Three.js Intersection here, so redo a targeted raycast against the one mesh.
+    if (hit.type === 'platform') {
+        const mesh = platformMeshes.get(hit.platformId);
+        if (!mesh) return null;
+        raycaster.setFromCamera(screenCenter, camera);
+        const hits = raycaster.intersectObject(mesh, false);
+        if (hits.length === 0 || !hits[0].face) return null;
+        _tmpNormal.copy(hits[0].face.normal).transformDirection(mesh.matrixWorld).normalize();
+        const ax = Math.abs(_tmpNormal.x);
+        const ay = Math.abs(_tmpNormal.y);
+        const az = Math.abs(_tmpNormal.z);
+        let axis, signed;
+        if (ay >= ax && ay >= az) { axis = 'y'; signed = _tmpNormal.y; }
+        else if (ax >= az) { axis = 'x'; signed = _tmpNormal.x; }
+        else { axis = 'z'; signed = _tmpNormal.z; }
+        const side = signed >= 0 ? 'max' : 'min';
+        const coord = axis === 'x' ? hit.point.x : axis === 'y' ? hit.point.y : hit.point.z;
+        const position = Math.round(coord / WORLD_SCALE);
+        return { ...hit, axis, side, position };
     }
 
     return null;

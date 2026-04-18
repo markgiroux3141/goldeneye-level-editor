@@ -8,6 +8,7 @@ import {
     resolveStairAnchor,
     computeStairRunAxis,
     isEdgeAgainstWall,
+    findFloorYAt,
 } from './platformGeometry.js';
 
 const PILLAR_WIDTH = 0.5; // WT — width of each L-pillar leg
@@ -108,7 +109,7 @@ export function buildSimplePlatformGeometry(platform, options = {}) {
         const zMaxAgainstWall = isEdgeAgainstWall(platform, 'zMax', brushes, wallProbe);
 
         const yPillarTop = yBot;
-        const yPillarBot = 0;
+        const yPillarBot = findFloorYAt(x + sizeX / 2, z + sizeZ / 2, yBot, brushes);
         const pH = yPillarTop - yPillarBot;
 
         // Helper: add a vertical plane between two world points facing outward.

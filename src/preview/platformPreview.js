@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { WORLD_SCALE } from '../core/constants.js';
 import { state } from '../state.js';
-import { pickAny } from '../raycaster.js';
+import { pickAny, pickFaceAny } from '../raycaster.js';
 import { isPointerLocked } from '../input/input.js';
 import { snapToWTGrid } from '../actions.js';
 import { Platform } from '../core/Platform.js';
@@ -18,6 +18,18 @@ let _added = false;
 const platformPreviewMat = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 });
 const platformSelectionMat = new THREE.LineBasicMaterial({ color: 0x00ff00, linewidth: 2 });
 const platformEdgeHighlightMat = new THREE.LineBasicMaterial({ color: 0x00ffff, linewidth: 3 });
+
+// Filled-quad materials for the simple-stair face gizmo.
+const stairFaceFromMat = new THREE.MeshBasicMaterial({
+    color: 0x00ff00, transparent: true, opacity: 0.4,
+    side: THREE.DoubleSide, depthTest: true,
+    polygonOffset: true, polygonOffsetFactor: -2,
+});
+const stairFaceCursorMat = new THREE.MeshBasicMaterial({
+    color: 0xffff00, transparent: true, opacity: 0.4,
+    side: THREE.DoubleSide, depthTest: true,
+    polygonOffset: true, polygonOffsetFactor: -2,
+});
 
 export function updatePlatformPreview(camera) {
     if (!_added) { scene.add(platformPreviewGroup); _added = true; }
@@ -136,53 +148,9 @@ export function updatePlatformPreview(camera) {
         }
     }
 
-    // Simple stair preview — markers and wireframe
+    // Simple stair preview — flat rectangular face gizmo that snaps to the hovered face
     if (state.platformPhase === 'simple_stair_from' || state.platformPhase === 'simple_stair_to') {
-        const W = WORLD_SCALE;
-        const s = 0.5;
-
-        const drawPlatformMarker = (cx, cy, cz, mat) => {
-            const pts = [
-                new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
-                new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz-s)*W),
-                new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz-s)*W),
-                new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz-s)*W),
-                new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz-s)*W),
-                new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
-                new THREE.Vector3((cx+s)*W, (cy-s)*W, (cz+s)*W),
-                new THREE.Vector3((cx+s)*W, (cy+s)*W, (cz+s)*W),
-                new THREE.Vector3((cx-s)*W, (cy+s)*W, (cz+s)*W),
-                new THREE.Vector3((cx-s)*W, (cy-s)*W, (cz+s)*W),
-            ];
-            const geo = new THREE.BufferGeometry().setFromPoints(pts);
-            platformPreviewGroup.add(new THREE.Line(geo, mat));
-        };
-
-        const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes);
-        if (anyHit) {
-            const snapped = snapToWTGrid(anyHit.point);
-            drawPlatformMarker(snapped.x, snapped.y, snapped.z, platformPreviewMat);
-
-            if (state.platformPhase === 'simple_stair_to' && state.simpleStairFrom) {
-                drawPlatformMarker(state.simpleStairFrom.x, state.simpleStairFrom.y, state.simpleStairFrom.z, platformSelectionMat);
-
-                const fromPt = state.simpleStairFrom;
-                const toPt = { x: snapped.x, y: snapped.y, z: snapped.z };
-                const rise = Math.abs(toPt.y - fromPt.y);
-                const ddx = Math.abs(toPt.x - fromPt.x);
-                const ddz = Math.abs(toPt.z - fromPt.z);
-                if (rise > 0 && (ddx >= 1 || ddz >= 1)) {
-                    const stairPts = buildStairRunPreviewLines(
-                        fromPt, toPt, state.stairWidth, state.stairStepHeight, state.stairRiseOverRun,
-                    );
-                    if (stairPts.length > 0) {
-                        const stairGeo = new THREE.BufferGeometry();
-                        stairGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(stairPts), 3));
-                        platformPreviewGroup.add(new THREE.LineSegments(stairGeo, platformSelectionMat));
-                    }
-                }
-            }
-        }
+        renderSimpleStairPreview(camera);
     }
 
     // Hover preview when idle
@@ -214,5 +182,126 @@ export function updatePlatformPreview(camera) {
             geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
             platformPreviewGroup.add(new THREE.LineSegments(geo, platformPreviewMat));
         }
+    }
+}
+
+const _FACE_NORMALS = {
+    x_max: new THREE.Vector3(1, 0, 0),
+    x_min: new THREE.Vector3(-1, 0, 0),
+    y_max: new THREE.Vector3(0, 1, 0),
+    y_min: new THREE.Vector3(0, -1, 0),
+    z_max: new THREE.Vector3(0, 0, 1),
+    z_min: new THREE.Vector3(0, 0, -1),
+};
+
+function faceNormal(face) {
+    return _FACE_NORMALS[`${face.axis}_${face.side}`] || _FACE_NORMALS.y_max;
+}
+
+function axisAlignedLongDir(face, camera) {
+    if (face.axis === 'y') {
+        const fwd = new THREE.Vector3();
+        camera.getWorldDirection(fwd);
+        // Long axis (stairWidth) perpendicular to the camera's dominant horizontal direction.
+        if (Math.abs(fwd.x) >= Math.abs(fwd.z)) return new THREE.Vector3(0, 0, 1);
+        return new THREE.Vector3(1, 0, 0);
+    }
+    // Wall: long axis is horizontal on the wall; short axis is vertical (world Y).
+    if (face.axis === 'x') return new THREE.Vector3(0, 0, 1);
+    return new THREE.Vector3(1, 0, 0);
+}
+
+function orientedLongDir(face, centerWT, targetWT, camera) {
+    const n = faceNormal(face);
+    const dir = new THREE.Vector3(
+        targetWT.x - centerWT.x,
+        targetWT.y - centerWT.y,
+        targetWT.z - centerWT.z,
+    );
+    dir.addScaledVector(n, -dir.dot(n));
+    if (dir.lengthSq() < 1e-6) return axisAlignedLongDir(face, camera);
+    dir.normalize();
+    const long = new THREE.Vector3().crossVectors(n, dir);
+    if (long.lengthSq() < 1e-6) return axisAlignedLongDir(face, camera);
+    return long.normalize();
+}
+
+function addFaceRect(face, centerWT, longDir, width, depth, material) {
+    const n = faceNormal(face);
+    const cx = centerWT.x * WORLD_SCALE + n.x * 0.002;
+    const cy = centerWT.y * WORLD_SCALE + n.y * 0.002;
+    const cz = centerWT.z * WORLD_SCALE + n.z * 0.002;
+
+    const shortDir = new THREE.Vector3().crossVectors(n, longDir);
+    if (shortDir.lengthSq() < 1e-6) return;
+    shortDir.normalize();
+
+    const hw = (width * WORLD_SCALE) / 2;
+    const hd = (depth * WORLD_SCALE) / 2;
+
+    const c0x = cx + longDir.x * -hw + shortDir.x * -hd;
+    const c0y = cy + longDir.y * -hw + shortDir.y * -hd;
+    const c0z = cz + longDir.z * -hw + shortDir.z * -hd;
+    const c1x = cx + longDir.x *  hw + shortDir.x * -hd;
+    const c1y = cy + longDir.y *  hw + shortDir.y * -hd;
+    const c1z = cz + longDir.z *  hw + shortDir.z * -hd;
+    const c2x = cx + longDir.x *  hw + shortDir.x *  hd;
+    const c2y = cy + longDir.y *  hw + shortDir.y *  hd;
+    const c2z = cz + longDir.z *  hw + shortDir.z *  hd;
+    const c3x = cx + longDir.x * -hw + shortDir.x *  hd;
+    const c3y = cy + longDir.y * -hw + shortDir.y *  hd;
+    const c3z = cz + longDir.z * -hw + shortDir.z *  hd;
+
+    const positions = new Float32Array([
+        c0x, c0y, c0z,  c1x, c1y, c1z,  c2x, c2y, c2z,
+        c0x, c0y, c0z,  c2x, c2y, c2z,  c3x, c3y, c3z,
+    ]);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.computeVertexNormals();
+    platformPreviewGroup.add(new THREE.Mesh(geo, material));
+}
+
+function renderSimpleStairPreview(camera) {
+    const cursorHit = pickFaceAny(camera, csgRegionMeshes, platformMeshes);
+    const from = state.simpleStairFrom;
+
+    if (state.platformPhase === 'simple_stair_from') {
+        if (!cursorHit) return;
+        const snapped = snapToWTGrid(cursorHit.point);
+        const longDir = axisAlignedLongDir(cursorHit, camera);
+        addFaceRect(cursorHit, snapped, longDir, state.stairWidth, 1, stairFaceCursorMat);
+        return;
+    }
+
+    // Phase 2: simple_stair_to — from is locked
+    if (!from) return;
+    const fromFace = { axis: from.axis || 'y', side: from.side || 'max' };
+
+    if (cursorHit) {
+        const cursorSnap = snapToWTGrid(cursorHit.point);
+
+        const fromLongDir = orientedLongDir(fromFace, from, cursorSnap, camera);
+        addFaceRect(fromFace, from, fromLongDir, state.stairWidth, 1, stairFaceFromMat);
+
+        const cursorLongDir = orientedLongDir(cursorHit, cursorSnap, from, camera);
+        addFaceRect(cursorHit, cursorSnap, cursorLongDir, state.stairWidth, 1, stairFaceCursorMat);
+
+        const rise = Math.abs(cursorSnap.y - from.y);
+        const ddx = Math.abs(cursorSnap.x - from.x);
+        const ddz = Math.abs(cursorSnap.z - from.z);
+        if (rise > 0 && (ddx >= 1 || ddz >= 1)) {
+            const stairPts = buildStairRunPreviewLines(
+                from, cursorSnap, state.stairWidth, state.stairStepHeight, state.stairRiseOverRun,
+            );
+            if (stairPts.length > 0) {
+                const stairGeo = new THREE.BufferGeometry();
+                stairGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(stairPts), 3));
+                platformPreviewGroup.add(new THREE.LineSegments(stairGeo, platformSelectionMat));
+            }
+        }
+    } else {
+        const longDir = axisAlignedLongDir(fromFace, camera);
+        addFaceRect(fromFace, from, longDir, state.stairWidth, 1, stairFaceFromMat);
     }
 }

@@ -115,13 +115,14 @@ export function buildBoxPlatformGeometry(platform, options = {}) {
     const builder = new PlatformGeometryBuilder();
 
     const { x, y, z, sizeX, sizeZ, thickness, grounded } = platform;
-    const effectiveThickness = grounded ? y : thickness;
+    const floorY = grounded ? findFloorYAt(x + sizeX / 2, z + sizeZ / 2, y, options.brushes) : (y - thickness);
+    const effectiveThickness = y - floorY;
     const xMin = x;
     const xMax = x + sizeX;
     const zMin = z;
     const zMax = z + sizeZ;
     const yTop = y;
-    const yBot = y - effectiveThickness;
+    const yBot = floorY;
 
     const textured = options.viewMode === 'textured';
     const treadZone = textured ? 0 : 0;
@@ -248,7 +249,9 @@ export function buildBoxStairGeometry(stairRun, fromPlatform, toPlatform, option
     const stepRise = rise / steps;
     const stepRun = totalRun / steps;
     const stairBaseY = bottomPt.y;                          // where steps start (unchanged)
-    const floorY = stairRun.grounded ? 0 : bottomPt.y;     // where side walls reach down to
+    const floorY = stairRun.grounded
+        ? findFloorYAt(bottomPt.x, bottomPt.z, bottomPt.y, options.brushes)
+        : bottomPt.y;
 
     const xorFlip = (runAxis === 'x') !== (stepRun < 0);
 
@@ -444,6 +447,24 @@ export function buildStairRunPreviewLines(fromPt, toPt, width, stepHeight, riseO
 
 const RAILING_HEIGHT = 3.0;     // height above surface in WT
 const HANDRAIL_DEPTH = 0.2;     // perpendicular handrail strip depth in WT
+
+// Highest CSG room floor at (x, z) strictly below `aboveY` (all in WT units).
+// Used by "grounded" platforms/stairs to extend walls down to the visible floor
+// beneath them, instead of the hardcoded world ground at Y=0. Returns 0 when no
+// subtract brush covers that XZ, preserving the old behavior for non-CSG levels.
+export function findFloorYAt(x, z, aboveY, brushes) {
+    if (!brushes || brushes.length === 0) return 0;
+    let bestY = 0;
+    let found = false;
+    for (const b of brushes) {
+        if (b.op !== 'subtract') continue;
+        if (x < b.x || x > b.x + b.w) continue;
+        if (z < b.z || z > b.z + b.d) continue;
+        if (b.y >= aboveY) continue;
+        if (!found || b.y > bestY) { bestY = b.y; found = true; }
+    }
+    return found ? bestY : 0;
+}
 
 // Returns true if a (WT-space) point is inside any subtractive brush's interior.
 // Doorframes/holeframes are included so railings stay across doorways

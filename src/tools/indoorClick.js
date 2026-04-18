@@ -4,7 +4,7 @@ import { WORLD_SCALE } from '../core/constants.js';
 import { state, saveUndoState } from '../state.js';
 import { isPointerLocked } from '../input/input.js';
 import { showMessage } from '../hud/hud.js';
-import { pickCSGFace, pickPlatform, pickStairRun, pickLight, pickAny } from '../raycaster.js';
+import { pickCSGFace, pickLight, pickAny, pickFaceAny, pickPlatformOrStair } from '../raycaster.js';
 import { snapToWTGrid } from '../actions.js';
 import { selectFaceAtCrosshair, toggleFaceInMultiSelection, confirmHolePlacement, confirmBracePlacement, confirmPillarPlacement } from '../csg/csgActions.js';
 import { csgRegionMeshes } from '../mesh/csgMesh.js';
@@ -18,6 +18,7 @@ import {
 } from '../mesh/MeshManager.js';
 import { stairRunMeshes } from '../mesh/MeshManager.js';
 import { closestPlatformEdge, closestOffsetOnEdge, projectCrosshairOntoEdge, bestEdgeForDirection } from './platformEdgeUtils.js';
+import { findFloorYAt } from '../geometry/platformGeometry.js';
 import { clearPlatformToolState, clearLightToolState } from './ToolManager.js';
 import { DEFAULT_LIGHT_Y_OFFSET } from '../core/constants.js';
 
@@ -121,10 +122,13 @@ export function handleIndoorClick(e, { gizmo, camera }) {
 
         // Simple stair placement — first click
         if (state.platformPhase === 'simple_stair_from') {
-            const anyHit = pickAny(camera, csgRegionMeshes, platformMeshes);
-            if (!anyHit) { showMessage('Click a surface'); return; }
-            const snapped = snapToWTGrid(anyHit.point);
-            state.simpleStairFrom = { x: snapped.x, y: snapped.y, z: snapped.z };
+            const faceHit = pickFaceAny(camera, csgRegionMeshes, platformMeshes);
+            if (!faceHit) { showMessage('Click a surface'); return; }
+            const snapped = snapToWTGrid(faceHit.point);
+            state.simpleStairFrom = {
+                x: snapped.x, y: snapped.y, z: snapped.z,
+                axis: faceHit.axis, side: faceHit.side,
+            };
             state.platformPhase = 'simple_stair_to';
             showMessage('Click second stair endpoint — Esc to cancel');
             return;
@@ -186,31 +190,28 @@ export function handleIndoorClick(e, { gizmo, camera }) {
                 }
             }
 
-            // Try to select an existing platform
-            const platHit = pickPlatform(camera, platformMeshes);
-            if (platHit) {
-                state.selectedPlatformId = platHit.platformId;
+            // Try to select a platform or stair — whichever is closer
+            const sel = pickPlatformOrStair(camera, platformMeshes, stairRunMeshes);
+            if (sel && sel.type === 'platform') {
+                state.selectedPlatformId = sel.platformId;
                 state.selectedStairRunId = null;
                 state.platformPhase = 'selected';
-                const plat = state.platforms.find(p => p.id === platHit.platformId);
-                showMessage(`Selected platform ${platHit.platformId} (${plat.sizeX}x${plat.sizeZ} at Y=${plat.y})`);
+                const plat = state.platforms.find(p => p.id === sel.platformId);
+                showMessage(`Selected platform ${sel.platformId} (${plat.sizeX}x${plat.sizeZ} at Y=${plat.y})`);
                 return;
             }
-
-            // Try to select a stair run
-            const stairHit = pickStairRun(camera, stairRunMeshes);
-            if (stairHit) {
-                state.selectedStairRunId = stairHit.stairRunId;
+            if (sel && sel.type === 'stair') {
+                state.selectedStairRunId = sel.stairRunId;
                 state.selectedPlatformId = null;
                 state.platformPhase = 'selected';
-                const run = state.stairRuns.find(r => r.id === stairHit.stairRunId);
+                const run = state.stairRuns.find(r => r.id === sel.stairRunId);
                 const fromPlat = run.fromPlatformId != null ? state.platforms.find(p => p.id === run.fromPlatformId) : null;
                 const toPlat = run.toPlatformId != null ? state.platforms.find(p => p.id === run.toPlatformId) : null;
                 const fromPtR = StairRun.resolveAnchor(fromPlat, run.anchorFrom);
                 const toPtR = StairRun.resolveAnchor(toPlat, run.anchorTo);
                 const rise = Math.abs(toPtR.y - fromPtR.y);
                 const steps = Math.max(1, Math.round(rise / run.stepHeight));
-                showMessage(`Selected stair run ${stairHit.stairRunId}: ${steps} steps`);
+                showMessage(`Selected stair run ${sel.stairRunId}: ${steps} steps`);
                 return;
             }
 
@@ -280,7 +281,14 @@ export function handleIndoorClick(e, { gizmo, camera }) {
             } else if (anyHit.type === 'ground' || anyHit.type === 'csg') {
                 state.platformConnectTo = { type: 'ground' };
                 const gp = snapToWTGrid(anyHit.point);
-                state.platformConnectTo.y = gp.y;
+                // If the user aimed at the world ground plane but a CSG room floor
+                // exists above it at that XZ, prefer the CSG floor Y.
+                let destY = gp.y;
+                if (anyHit.type === 'ground') {
+                    const csgFloor = findFloorYAt(gp.x, gp.z, fromPlat.y, state.csg.brushes);
+                    if (csgFloor > destY) destY = csgFloor;
+                }
+                state.platformConnectTo.y = destY;
                 const dir = { x: gp.x - fromPlat.centerX, z: gp.z - fromPlat.centerZ };
                 state.platformConnectFrom.edge = bestEdgeForDirection(fromPlat, dir);
             } else {
