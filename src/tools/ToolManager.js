@@ -45,6 +45,7 @@ export function clearLightToolState() {
 // time the user enters it they get a clean slate (no stale selection / hole mode).
 export function clearCSGToolState() {
     state.csg.selectedFace = null;
+    state.csg.selectedFaces = [];
     state.csg.activeBrush = null;
     state.csg.activeOp = null;
     state.csg.activeSide = null;

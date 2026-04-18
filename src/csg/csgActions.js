@@ -17,6 +17,7 @@ import {
     MIN_BRACE_DIM, MAX_BRACE_DIM, MIN_PILLAR_SIZE, MAX_PILLAR_SIZE,
 } from '../core/constants.js';
 import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
+import { showMessage } from '../hud/hud.js';
 
 // ─── Constants ──────────────────────────────────────────────────────
 const PUSH_PULL_STEP = 4;
@@ -115,6 +116,18 @@ export function isFullFace() {
            (selSizeV <= 0 || selSizeV >= info.vSize);
 }
 
+// Whether a face's current AABB position still matches the {axis,side,position}
+// recorded on the picked face. Shift-clicked faces are inherently "full-face"
+// (they have no sub-rect state), so only brush-existence needs checking.
+function faceBrushStillAligned(face) {
+    if (!face || face.brushId === 0) return false;
+    const brush = state.csg.brushes.find(b => b.id === face.brushId);
+    if (!brush) return false;
+    const dimKey = face.axis === 'x' ? 'w' : face.axis === 'y' ? 'h' : 'd';
+    const pos = face.side === 'max' ? brush[face.axis] + brush[dimKey] : brush[face.axis];
+    return pos === face.position;
+}
+
 // ─── Selection ──────────────────────────────────────────────────────
 
 // Called by indoorClick when the user clicks while CSG tool is active.
@@ -124,6 +137,7 @@ export function selectFaceAtCrosshair(face) {
 
     if (!facesMatch(state.csg.selectedFace, face)) {
         state.csg.selectedFace = face;
+        state.csg.selectedFaces = [];
         state.csg.selSizeU = 0;
         state.csg.selSizeV = 0;
         state.csg.selU0 = 0; state.csg.selU1 = 0; state.csg.selV0 = 0; state.csg.selV1 = 0;
@@ -139,9 +153,52 @@ export function selectFaceAtCrosshair(face) {
     }
 }
 
+// Shift+Click handler: toggle a coplanar full-face selection into the multi-set.
+// Enforces: primary exists, primary is full-face, neither face is baked, face
+// is coplanar with primary (same axis/side/position), brush still aligned.
+export function toggleFaceInMultiSelection(face) {
+    const csg = state.csg;
+    if (!face) return;
+    if (!csg.selectedFace) { showMessage('Select a primary face first'); return; }
+
+    const primary = csg.selectedFace;
+    if (primary.brushId === 0 || face.brushId === 0) {
+        showMessage('Multi-select not available on baked faces');
+        return;
+    }
+    if (face.axis !== primary.axis || face.side !== primary.side || face.position !== primary.position) {
+        showMessage('Face must be coplanar with the primary selection');
+        return;
+    }
+    if (!isFullFace()) {
+        showMessage('Multi-select requires full-face selections');
+        return;
+    }
+    if (!faceBrushStillAligned(primary) || !faceBrushStillAligned(face)) {
+        showMessage('Face no longer aligned with its brush');
+        return;
+    }
+    if (facesMatch(primary, face)) return;  // shift-clicking primary is a no-op
+
+    const idx = csg.selectedFaces.findIndex(f => facesMatch(f, face));
+    if (idx >= 0) {
+        csg.selectedFaces.splice(idx, 1);
+    } else {
+        csg.selectedFaces.push(face);
+        // Any growth to active brush is no longer valid once multi-select starts.
+        csg.activeBrush = null;
+        csg.activeOp = null;
+        csg.activeSide = null;
+    }
+}
+
 // Adjust the selection rectangle size on the current face (scroll wheel)
 export function adjustSelectionSize(deltaU, deltaV) {
     if (!state.csg.selectedFace) return;
+    if (state.csg.selectedFaces.length > 0) {
+        showMessage('Scroll disabled during multi-face selection');
+        return;
+    }
     const info = getSelectedFaceInfo();
     if (!info) return;
 
@@ -281,6 +338,30 @@ function growActiveBrush(amount) {
     }
 }
 
+// Apply a full-face +step grow to a single brush AABB.
+function applyFullFacePush(brush, axis, side, step) {
+    const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
+    if (side === 'max') { brush[dimKey] += step; }
+    else { brush[axis] -= step; brush[dimKey] += step; }
+    if (axis === 'y' && side === 'min') brush.floorY = brush.y;
+}
+
+// Apply a full-face -step shrink to a single brush AABB. Returns false if the
+// brush is too thin along `axis` to absorb the shrink.
+function applyFullFacePull(brush, axis, side, step) {
+    const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
+    if (brush[dimKey] <= step) return false;
+    if (side === 'max') { brush[dimKey] -= step; }
+    else { brush[axis] += step; brush[dimKey] -= step; }
+    if (axis === 'y' && side === 'min') brush.floorY = brush.y;
+    return true;
+}
+
+function newFacePosition(brush, axis, side) {
+    const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
+    return side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
+}
+
 export function pushSelectedFace(step = PUSH_PULL_STEP) {
     const csg = state.csg;
     if (!csg.selectedFace) return;
@@ -288,15 +369,33 @@ export function pushSelectedFace(step = PUSH_PULL_STEP) {
     const sel = csg.selectedFace;
     const brush = state.csg.brushes.find(b => b.id === sel.brushId);
     const isBaked = sel.brushId === 0;
+    const hasMulti = csg.selectedFaces.length > 0;
+
+    // Multi-face full-face push: apply to primary + every member in lockstep.
+    if (hasMulti && isFullFace() && brush && !isBaked) {
+        const { axis, side } = sel;
+        const affected = [brush.id];
+        applyFullFacePush(brush, axis, side, step);
+        sel.position = newFacePosition(brush, axis, side);
+
+        for (const member of csg.selectedFaces) {
+            const mb = state.csg.brushes.find(b => b.id === member.brushId);
+            if (!mb) continue;
+            applyFullFacePush(mb, member.axis, member.side, step);
+            member.position = newFacePosition(mb, member.axis, member.side);
+            affected.push(mb.id);
+        }
+        csg.activeBrush = null;
+        csg.activeSide = null;
+        rebuildAffectedRegions(affected);
+        return;
+    }
 
     if (isFullFace() && brush && !isBaked) {
         // Full-face push on a real brush — resize directly
         const { axis, side } = sel;
-        const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
-        if (side === 'max') { brush[dimKey] += step; }
-        else { brush[axis] -= step; brush[dimKey] += step; }
-        if (axis === 'y' && side === 'min') brush.floorY = brush.y;
-        sel.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
+        applyFullFacePush(brush, axis, side, step);
+        sel.position = newFacePosition(brush, axis, side);
         csg.activeBrush = null;
         csg.activeSide = null;
     } else {
@@ -324,18 +423,43 @@ export function pullSelectedFace(step = PUSH_PULL_STEP) {
     const sel = csg.selectedFace;
     const brush = state.csg.brushes.find(b => b.id === sel.brushId);
     const isBaked = sel.brushId === 0;
+    const hasMulti = csg.selectedFaces.length > 0;
+
+    // Multi-face full-face pull: apply to primary + every member in lockstep.
+    // Abort atomically if any brush is too thin along the pull axis.
+    if (hasMulti && isFullFace() && brush && !isBaked) {
+        const { axis, side } = sel;
+        const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
+        if (brush[dimKey] <= step) { showMessage('Brush too thin to pull'); return; }
+        for (const member of csg.selectedFaces) {
+            const mb = state.csg.brushes.find(b => b.id === member.brushId);
+            const mDim = member.axis === 'x' ? 'w' : member.axis === 'y' ? 'h' : 'd';
+            if (!mb || mb[mDim] <= step) { showMessage('A member brush is too thin to pull'); return; }
+        }
+
+        const affected = [brush.id];
+        applyFullFacePull(brush, axis, side, step);
+        sel.position = newFacePosition(brush, axis, side);
+
+        for (const member of csg.selectedFaces) {
+            const mb = state.csg.brushes.find(b => b.id === member.brushId);
+            applyFullFacePull(mb, member.axis, member.side, step);
+            member.position = newFacePosition(mb, member.axis, member.side);
+            affected.push(mb.id);
+        }
+        csg.activeBrush = null;
+        csg.activeSide = null;
+        rebuildAffectedRegions(affected);
+        return;
+    }
 
     if (csg.activeBrush && csg.activeOp === 'pull') {
         growActiveBrush(step);
         csg.selectedFace = getActiveBrushInwardFace();
     } else if (isFullFace() && brush && !isBaked) {
         const { axis, side } = sel;
-        const dimKey = axis === 'x' ? 'w' : axis === 'y' ? 'h' : 'd';
-        if (brush[dimKey] <= step) return;
-        if (side === 'max') { brush[dimKey] -= step; }
-        else { brush[axis] += step; brush[dimKey] -= step; }
-        if (axis === 'y' && side === 'min') brush.floorY = brush.y;
-        sel.position = side === 'max' ? brush[axis] + brush[dimKey] : brush[axis];
+        if (!applyFullFacePull(brush, axis, side, step)) return;
+        sel.position = newFacePosition(brush, axis, side);
         csg.activeBrush = null;
         csg.activeSide = null;
     } else {
@@ -354,6 +478,7 @@ export function pullSelectedFace(step = PUSH_PULL_STEP) {
 export function extrudeSelectedFace(step = PUSH_PULL_STEP) {
     const csg = state.csg;
     if (!csg.selectedFace) return;
+    csg.selectedFaces = [];  // extrude spawns a new brush; multi-select doesn't apply
 
     const sel = csg.selectedFace;
     const brush = state.csg.brushes.find(b => b.id === sel.brushId);
@@ -1215,6 +1340,7 @@ export function bakeCurrentRegion() {
         state.csg.brushes = state.csg.brushes.filter(b => stillUnbaked.has(b.id));
 
         csg.selectedFace = null;
+        csg.selectedFaces = [];
         csg.activeBrush = null;
         csg.activeOp = null;
         csg.activeSide = null;
@@ -1242,13 +1368,11 @@ export function retextureRoom(schemeKey) {
 
     const roomIds = findRoomBrushes(startBrush, state.csg.brushes);
     const roomBrushes = state.csg.brushes.filter(b => roomIds.has(b.id));
-    // Room floor comes from the additive brush only — stair voids and other
-    // subtract carves can extend below the visible floor and would otherwise
-    // pull the wall-texture split line down to ground level.
-    const roomFloorY = startBrush.minY;
+    // floorY is per-brush (pit subtracts anchor to their own minY, stair voids
+    // to the adjoining room floor) and is kept in sync on every y-min edit.
+    // Don't clobber it here — that's what breaks pit wall splits on retexture.
     for (const b of roomBrushes) {
         b.schemeKey = schemeKey;
-        b.floorY = roomFloorY;
     }
 
     rebuildAffectedRegions([...roomIds]);
@@ -1264,6 +1388,7 @@ export function deleteSelectedBrush() {
     state.csg.brushes.splice(idx, 1);
 
     csg.selectedFace = null;
+    csg.selectedFaces = [];
     csg.activeBrush = null;
     csg.activeOp = null;
     csg.activeSide = null;

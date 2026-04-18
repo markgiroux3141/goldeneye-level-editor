@@ -180,6 +180,10 @@ export function updateHUD(camera) {
                 lines.push(`Active: ${state.csg.activeOp} (+/- to continue, Esc to clear)`);
             }
 
+            if (state.csg.selectedFaces.length > 0) {
+                lines.push(`Multi: ${1 + state.csg.selectedFaces.length} faces (Shift+Click to toggle)`);
+            }
+
             // Texture scheme
             const schemeKey = brush ? brush.schemeKey : null;
             const schemeName = schemeKey

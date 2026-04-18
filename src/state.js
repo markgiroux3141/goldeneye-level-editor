@@ -26,6 +26,7 @@ export const state = {
         totalBakedBrushes: 0,
         // Selection
         selectedFace: null,     // { regionId, brushId, axis, side, position }
+        selectedFaces: [],      // additional coplanar full-face faces (shift-clicked); same shape as selectedFace
         selSizeU: 0, selSizeV: 0,  // 0 = full face
         selU0: 0, selU1: 0, selV0: 0, selV1: 0,  // computed each frame
         // Active push/pull/extrude tracking
@@ -155,6 +156,7 @@ export function undo() {
     state.csg.csgStairs = snapshot.csgStairs || [];
     state.csg.nextCsgStairId = snapshot.nextCsgStairId || (Math.max(...state.csg.csgStairs.map(s => s.id), 0) + 1);
     state.csg.selectedFace = null;
+    state.csg.selectedFaces = [];
     state.csg.activeBrush = null;
     state.csg.activeOp = null;
     state.csg.activeSide = null;
@@ -205,6 +207,7 @@ export function deserializeLevel(json) {
     state.csg.csgStairs = data.csgStairs || [];
     state.csg.nextCsgStairId = data.nextCsgStairId || (Math.max(...state.csg.csgStairs.map(s => s.id), 0) + 1);
     state.csg.selectedFace = null;
+    state.csg.selectedFaces = [];
     state.csg.activeBrush = null;
     state.csg.activeOp = null;
     state.csg.activeSide = null;

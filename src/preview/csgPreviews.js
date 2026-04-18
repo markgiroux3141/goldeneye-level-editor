@@ -11,7 +11,7 @@ import { isPointerLocked } from '../input/input.js';
 import { csgRegionMeshes } from '../mesh/csgMesh.js';
 import { pickCSGFace } from '../raycaster.js';
 import {
-    facesMatch, getSelectedFaceInfo, worldToFaceUV, computeHolePreview, computeBracePreview, computePillarPreview,
+    facesMatch, getSelectedFaceInfo, getFaceUVInfo, worldToFaceUV, computeHolePreview, computeBracePreview, computePillarPreview,
 } from '../csg/csgActions.js';
 import { WORLD_SCALE } from '../core/constants.js';
 
@@ -25,6 +25,8 @@ const selectionMat = new THREE.MeshBasicMaterial({
     side: THREE.DoubleSide, depthTest: true,
     polygonOffset: true, polygonOffsetFactor: -2,
 });
+
+let multiSelectionMeshes = [];
 
 let holeMesh = null;
 const holeMat = new THREE.MeshBasicMaterial({
@@ -175,6 +177,28 @@ export function updateCSGSelectionPreview(camera) {
     const geo = buildFaceQuad(sel, u0, u1, v0, v1, SEL_OFFSET);
     selectionMesh = new THREE.Mesh(geo, selectionMat);
     scene.add(selectionMesh);
+}
+
+// Persistent full-face highlights for every face in state.csg.selectedFaces.
+// Unlike the primary preview, these are drawn even when the crosshair is not
+// on them, so the user can see which faces are locked into the multi-push.
+export function updateCSGMultiSelectionPreview() {
+    for (const m of multiSelectionMeshes) disposeMesh(m);
+    multiSelectionMeshes = [];
+
+    const faces = state.csg.selectedFaces;
+    if (!faces || faces.length === 0) return;
+
+    for (const f of faces) {
+        const brush = state.csg.brushes.find(b => b.id === f.brushId);
+        if (!brush) continue;
+        const info = getFaceUVInfo(brush, f.axis);
+        if (!info) continue;
+        const geo = buildFaceQuad(f, info.uMin, info.uMax, info.vMin, info.vMax, SEL_OFFSET);
+        const mesh = new THREE.Mesh(geo, selectionMat);
+        scene.add(mesh);
+        multiSelectionMeshes.push(mesh);
+    }
 }
 
 // Update the yellow hole/door preview while in hole mode.

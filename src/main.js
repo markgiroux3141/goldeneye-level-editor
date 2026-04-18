@@ -22,7 +22,7 @@ import { terrainMeshes, rebuildPlatform, rebuildConnectedStairRuns, rebuildTerra
 import { BrushDef } from './core/BrushDef.js';
 import { updatePlatformPreview } from './preview/platformPreview.js';
 import { updateTerrainPreview } from './preview/terrainPreview.js';
-import { updateCSGSelectionPreview, updateCSGHolePreview, updateCSGBracePreview, updateCSGPillarPreview, updateCSGStairPreview } from './preview/csgPreviews.js';
+import { updateCSGSelectionPreview, updateCSGMultiSelectionPreview, updateCSGHolePreview, updateCSGBracePreview, updateCSGPillarPreview, updateCSGStairPreview } from './preview/csgPreviews.js';
 import * as csgActions from './csg/csgActions.js';
 import { updateTerrainHUD } from './hud/terrainHud.js';
 import { initToolManager, toggleEditorMode, getActiveTerrain } from './tools/ToolManager.js';
@@ -436,6 +436,7 @@ function animate() {
 
     updatePlatformPreview(camera);
     updateCSGSelectionPreview(camera);
+    updateCSGMultiSelectionPreview();
     updateCSGHolePreview(camera);
     updateCSGBracePreview(camera);
     updateCSGPillarPreview(camera);

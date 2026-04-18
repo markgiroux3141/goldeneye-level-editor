@@ -6,7 +6,7 @@ import { isPointerLocked } from '../input/input.js';
 import { showMessage } from '../hud/hud.js';
 import { pickCSGFace, pickPlatform, pickStairRun, pickLight, pickAny } from '../raycaster.js';
 import { snapToWTGrid } from '../actions.js';
-import { selectFaceAtCrosshair, confirmHolePlacement, confirmBracePlacement, confirmPillarPlacement } from '../csg/csgActions.js';
+import { selectFaceAtCrosshair, toggleFaceInMultiSelection, confirmHolePlacement, confirmBracePlacement, confirmPillarPlacement } from '../csg/csgActions.js';
 import { csgRegionMeshes } from '../mesh/csgMesh.js';
 import { Platform } from '../core/Platform.js';
 import { StairRun } from '../core/StairRun.js';
@@ -42,7 +42,8 @@ export function handleIndoorClick(e, { gizmo, camera }) {
             return;
         }
         const csgHit = pickCSGFace(camera, csgRegionMeshes);
-        selectFaceAtCrosshair(csgHit);
+        if (e.shiftKey) toggleFaceInMultiSelection(csgHit);
+        else selectFaceAtCrosshair(csgHit);
         return;
     }
 

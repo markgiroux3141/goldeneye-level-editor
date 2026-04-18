@@ -42,6 +42,7 @@ export function handleIndoorKey(e, { gizmo, camera }) {
                 csgActions.exitBraceMode();
                 csgActions.exitPillarMode();
                 state.csg.selectedFace = null;
+                state.csg.selectedFaces = [];
             }
             setTool('csg');
             return;
@@ -303,6 +304,7 @@ export function handleIndoorKey(e, { gizmo, camera }) {
                 showMessage('Face Paint mode cancelled');
             } else {
                 state.csg.selectedFace = null;
+                state.csg.selectedFaces = [];
                 state.csg.activeBrush = null;
                 state.csg.activeOp = null;
                 state.csg.activeSide = null;
