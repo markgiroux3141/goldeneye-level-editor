@@ -1,9 +1,9 @@
 // Cave Painting Spike — entry point.
-// Density field + marching cubes + spherical FBM brush + first-person walk mode.
+// Sparse-chunk density field + marching cubes + fractal brush + first-person walk mode.
 
 import * as THREE from 'three';
-import { DensityField } from './densityField.js';
-import { meshBlock } from './marchingCubes.js';
+import { DensityField, chunkKey } from './densityField.js';
+import { meshChunk } from './marchingCubes.js';
 import { applyBrush } from './brush.js';
 import {
     initInput, onScroll, updateCamera,
@@ -22,33 +22,33 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a10);
-scene.fog = new THREE.Fog(0x0a0a10, 15, 45);
+scene.background = new THREE.Color(0x15161c);
+scene.fog = new THREE.Fog(0x15161c, 20, 80);
+
+const CAVITY_CENTER = new THREE.Vector3(6.4, 6.4, 6.4);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.05, 200);
-camera.position.set(18, 8, 18);
-camera.lookAt(6.4, 6.4, 6.4);
+camera.position.copy(CAVITY_CENTER);
+camera.lookAt(CAVITY_CENTER.x + 1, CAVITY_CENTER.y, CAVITY_CENTER.z);
 
-// Hemisphere fill so cave interiors aren't pitch black.
-scene.add(new THREE.HemisphereLight(0xa0b0ff, 0x3a2a20, 0.45));
+// Direction-independent fill so cave interiors read clearly.
+scene.add(new THREE.AmbientLight(0x404858, 0.35));
+scene.add(new THREE.HemisphereLight(0xb8c4ff, 0x4a3a2a, 0.8));
 
 // Warm directional "sun".
 const sun = new THREE.DirectionalLight(0xfff1d6, 0.9);
 sun.position.set(10, 20, 5);
 scene.add(sun);
 
-// Camera-attached "miner's headlamp" — point light for cave interiors.
+// Cool secondary fill from the opposite side.
+const fill = new THREE.DirectionalLight(0x88a0c8, 0.45);
+fill.position.set(-8, -3, -10);
+scene.add(fill);
+
+// Camera-attached "miner's headlamp" — dramatic local pool of light.
 const headlamp = new THREE.PointLight(0xffe8b0, 1.2, 18, 2);
 camera.add(headlamp);
 scene.add(camera);
-
-// Reference ground plane below the volume.
-const groundGeo = new THREE.PlaneGeometry(200, 200);
-const groundMat = new THREE.MeshStandardMaterial({ color: 0x151820, roughness: 1 });
-const ground = new THREE.Mesh(groundGeo, groundMat);
-ground.rotation.x = -Math.PI / 2;
-ground.position.y = -0.5;
-scene.add(ground);
 
 window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -56,22 +56,29 @@ window.addEventListener('resize', () => {
     camera.updateProjectionMatrix();
 });
 
-// ---------- Density field + block manager ----------
+// ---------- Density field + chunk manager ----------
 
-// 64³ cells → 4³ = 64 blocks of 16³ cells each. 0.2 m voxels → 12.8 m cube.
-// Placed so (0,0,0) world sits at the min corner of the volume.
+// Sparse world; voxel size 0.4 m (N64-chunky resolution); unallocated chunks default to solid rock.
 const field = new DensityField({
-    resolution: 64,
-    voxelSize: 0.2,
-    blockSize: 16,
-    origin: [0, 0, 0],
+    voxelSize: 0.4,
+    defaultDensity: 1.0,
 });
 
+// N64-style rock texture: 32×32 BMP, nearest-filtered, world-tiled via dominant-axis UVs.
+const rockTexture = new THREE.TextureLoader().load('../../public/textures/tempImgEd00BA.bmp');
+rockTexture.wrapS = THREE.RepeatWrapping;
+rockTexture.wrapT = THREE.RepeatWrapping;
+rockTexture.magFilter = THREE.NearestFilter;
+rockTexture.minFilter = THREE.NearestFilter;
+rockTexture.generateMipmaps = false;
+rockTexture.colorSpace = THREE.SRGBColorSpace;
+
 const rockMaterial = new THREE.MeshStandardMaterial({
-    color: 0x807668,
+    map: rockTexture,
+    color: 0xffffff,
     roughness: 0.95,
     metalness: 0.0,
-    side: THREE.DoubleSide, // avoids any winding-order worries; lighting uses gradient normals
+    side: THREE.FrontSide, // backfaces culled — makes inside/outside obvious
     flatShading: false,
 });
 
@@ -79,24 +86,20 @@ const blocksGroup = new THREE.Group();
 blocksGroup.name = 'CaveBlocks';
 scene.add(blocksGroup);
 
-// blockMeshes[bi][bj][bk] → Mesh | null
-const blockMeshes = [];
-for (let bi = 0; bi < field.blocksPerAxis; bi++) {
-    blockMeshes.push([]);
-    for (let bj = 0; bj < field.blocksPerAxis; bj++) {
-        blockMeshes[bi].push(new Array(field.blocksPerAxis).fill(null));
-    }
-}
+// chunkKey(cx,cy,cz) → THREE.Mesh
+const chunkMeshes = new Map();
 
-function regenerateBlock(bi, bj, bk) {
-    const data = meshBlock(field, bi, bj, bk);
-    const existing = blockMeshes[bi][bj][bk];
+function regenerateChunk(cx, cy, cz) {
+    const window = field.buildChunkWindow(cx, cy, cz);
+    const data = meshChunk(window, cx, cy, cz, field.voxelSize);
+    const key = chunkKey(cx, cy, cz);
+    const existing = chunkMeshes.get(key);
 
     if (!data) {
         if (existing) {
             blocksGroup.remove(existing);
             existing.geometry.dispose();
-            blockMeshes[bi][bj][bk] = null;
+            chunkMeshes.delete(key);
         }
         return;
     }
@@ -105,15 +108,16 @@ function regenerateBlock(bi, bj, bk) {
     if (!mesh) {
         const geom = new THREE.BufferGeometry();
         mesh = new THREE.Mesh(geom, rockMaterial);
-        mesh.name = `block_${bi}_${bj}_${bk}`;
-        mesh.userData.blockIJK = [bi, bj, bk];
+        mesh.name = `chunk_${cx}_${cy}_${cz}`;
+        mesh.userData.chunkCoord = [cx, cy, cz];
         blocksGroup.add(mesh);
-        blockMeshes[bi][bj][bk] = mesh;
+        chunkMeshes.set(key, mesh);
     }
 
     const g = mesh.geometry;
     g.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
     g.setAttribute('normal', new THREE.BufferAttribute(data.normals, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(data.uvs, 2));
     g.computeBoundingSphere();
     g.computeBoundingBox();
 }
@@ -134,10 +138,12 @@ scene.add(brushPreview);
 // ---------- Brush state ----------
 
 const brushState = {
-    radius: 1.2,
-    strength: 0.8,
-    minRadius: 0.3,
-    maxRadius: 3.0,
+    radius: 1.5,
+    strength: 0.4,
+    minRadius: 0.6,
+    maxRadius: 3.5,
+    minStrength: 0.05,
+    maxStrength: 2.0,
 };
 
 onScroll((deltaY) => {
@@ -148,24 +154,30 @@ onScroll((deltaY) => {
 // ---------- Initialization ----------
 
 const hudRadius = document.getElementById('hud-radius');
+const hudStrength = document.getElementById('hud-strength');
 const hudMode = document.getElementById('hud-mode');
 const hudRemesh = document.getElementById('hud-remesh');
 const loadingOverlay = document.getElementById('loading');
 
 function initAndMeshAll() {
     const t0 = performance.now();
-    field.initLumpyRock();
+    field.initHollowCavity({
+        center: [CAVITY_CENTER.x, CAVITY_CENTER.y, CAVITY_CENTER.z],
+        radius: 5.0,
+        noiseAmp: 0.3,
+        noiseFreq: 0.15,
+    });
     const t1 = performance.now();
     console.log(`[cave] Density init: ${(t1 - t0).toFixed(1)} ms`);
 
     const t2 = performance.now();
     let meshed = 0;
-    field.flushDirty((bi, bj, bk) => {
-        regenerateBlock(bi, bj, bk);
+    field.flushDirty((cx, cy, cz) => {
+        regenerateChunk(cx, cy, cz);
         meshed++;
     });
     const t3 = performance.now();
-    console.log(`[cave] Initial mesh: ${meshed} blocks in ${(t3 - t2).toFixed(1)} ms`);
+    console.log(`[cave] Initial mesh: ${meshed} chunks in ${(t3 - t2).toFixed(1)} ms`);
 }
 
 // Async so the "Generating…" overlay can render first.
@@ -199,11 +211,19 @@ function pickBrushTarget() {
 
 // ---------- Radius keybinds (+/-) ----------
 
+let brushGizmoVisible = true;
+
 document.addEventListener('keydown', (e) => {
     if (e.code === 'Equal' || e.code === 'NumpadAdd') {
         brushState.radius = Math.min(brushState.maxRadius, brushState.radius + 0.15);
     } else if (e.code === 'Minus' || e.code === 'NumpadSubtract') {
         brushState.radius = Math.max(brushState.minRadius, brushState.radius - 0.15);
+    } else if (e.code === 'BracketRight') {
+        brushState.strength = Math.min(brushState.maxStrength, brushState.strength + 0.1);
+    } else if (e.code === 'BracketLeft') {
+        brushState.strength = Math.max(brushState.minStrength, brushState.strength - 0.1);
+    } else if (e.code === 'KeyG') {
+        brushGizmoVisible = !brushGizmoVisible;
     }
 });
 
@@ -224,7 +244,7 @@ function loop() {
     // Brush preview — where the brush would hit.
     pickBrushTarget();
     const mode = isShiftHeld() ? 'add' : 'subtract';
-    brushPreview.visible = isPointerLocked();
+    brushPreview.visible = isPointerLocked() && brushGizmoVisible;
     brushPreview.position.copy(brushTarget);
     brushPreview.scale.setScalar(brushState.radius);
     brushPreview.material = (mode === 'add') ? brushPreviewMatAdd : brushPreviewMatSubtract;
@@ -236,8 +256,8 @@ function loop() {
         const changed = applyBrush(field, brushTarget, brushState.radius, brushState.strength, mode, dt);
         if (changed) {
             const t0 = performance.now();
-            field.flushDirty((bi, bj, bk) => {
-                regenerateBlock(bi, bj, bk);
+            field.flushDirty((cx, cy, cz) => {
+                regenerateChunk(cx, cy, cz);
                 remeshCount++;
             });
             remeshMs = performance.now() - t0;
@@ -245,9 +265,10 @@ function loop() {
     }
 
     hudRadius.textContent = brushState.radius.toFixed(2);
+    hudStrength.textContent = brushState.strength.toFixed(2);
     hudMode.textContent = mode;
     if (remeshCount > 0) {
-        hudRemesh.textContent = `${remeshCount} blk / ${remeshMs.toFixed(1)}ms`;
+        hudRemesh.textContent = `${remeshCount} chk / ${remeshMs.toFixed(1)}ms`;
     }
 
     renderer.render(scene, camera);

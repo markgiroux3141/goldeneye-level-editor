@@ -9,6 +9,7 @@ import { state, deserializeLevel } from './state.js';
 import { initMaterials, loadBmpTextures, clearCSGMaterialCache } from './scene/materials.js';
 import { loadTextureSchemes } from './scene/textureSchemes.js';
 import { showMessage, updateHUD, initHUD } from './hud/hud.js';
+import { initSidebar } from './ui/Sidebar.js';
 import { loadFromLocalStorage } from './io/LevelStorage.js';
 import { PlatformGizmo } from './gizmo.js';
 import { FOG_NEAR, FOG_FAR, INDOOR_BG_COLOR, TERRAIN_BG_COLOR, TERRAIN_PERSPECTIVE_BG } from './core/constants.js';
@@ -42,6 +43,7 @@ initScene();
 initInput(renderer.domElement);
 initKeyActions();
 initHUD();
+initSidebar();
 __mark('sceneInputHud');
 
 // Platform gizmo (move arrows + scale handles)

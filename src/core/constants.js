@@ -9,17 +9,12 @@ export const WALL_SPLIT_V = 6;      // WT height where lower wall meets upper wa
 export const CSG_CENTROID_TOL = 0.5; // tolerance (WT) for face identity recovery
 
 // Editor defaults
-export const DEFAULT_DOOR_WIDTH = 3;
-export const DEFAULT_DOOR_HEIGHT = 7;
-export const DEFAULT_PUSH_STEP = 4;
 export const DEFAULT_PLATFORM_SIZE_X = 4;
 export const DEFAULT_PLATFORM_SIZE_Z = 4;
 export const DEFAULT_PLATFORM_THICKNESS = 1;
 export const DEFAULT_STAIR_WIDTH = 4;
 export const DEFAULT_STAIR_STEP_HEIGHT = 1;
 export const DEFAULT_STAIR_RISE_OVER_RUN = 1;
-export const DEFAULT_EXTRUDE_WIDTH = 1;
-export const DEFAULT_EXTRUDE_HEIGHT = 1;
 export const DEFAULT_BRACE_WIDTH = 1;   // WT — size along the wall (U axis)
 export const DEFAULT_BRACE_DEPTH = 1;   // WT — protrusion into the room
 export const BRACE_ZONE = 7;            // material zone index for brace faces

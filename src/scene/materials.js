@@ -27,8 +27,8 @@ function createCanvasTexture(color1, color2, lineColor) {
     const tex = new THREE.CanvasTexture(canvas);
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
-    tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.NearestMipMapLinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
     return tex;
 }
 
@@ -61,8 +61,8 @@ export function loadBmpTextures() {
         loader.load(`public/textures/${name}.bmp`, (tex) => {
             tex.wrapS = THREE.RepeatWrapping;
             tex.wrapT = THREE.RepeatWrapping;
-            tex.magFilter = THREE.NearestFilter;
-            tex.minFilter = THREE.NearestMipMapLinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            tex.minFilter = THREE.LinearMipmapLinearFilter;
             textureMap.set(name, tex);
             resolve();
         }, undefined, () => resolve());
@@ -87,8 +87,8 @@ export function loadBmpTextures() {
             const rgbaTex = new THREE.CanvasTexture(canvas);
             rgbaTex.wrapS = THREE.RepeatWrapping;
             rgbaTex.wrapT = THREE.RepeatWrapping;
-            rgbaTex.magFilter = THREE.NearestFilter;
-            rgbaTex.minFilter = THREE.NearestMipMapLinearFilter;
+            rgbaTex.magFilter = THREE.LinearFilter;
+            rgbaTex.minFilter = THREE.LinearMipmapLinearFilter;
             textureMap.set('railing', rgbaTex);
 
             // Build a luminance-from-alpha companion for shadow alphaMap.
@@ -108,8 +108,8 @@ export function loadBmpTextures() {
             const alphaTex = new THREE.CanvasTexture(alphaCanvas);
             alphaTex.wrapS = THREE.RepeatWrapping;
             alphaTex.wrapT = THREE.RepeatWrapping;
-            alphaTex.magFilter = THREE.NearestFilter;
-            alphaTex.minFilter = THREE.NearestMipMapLinearFilter;
+            alphaTex.magFilter = THREE.LinearFilter;
+            alphaTex.minFilter = THREE.LinearMipmapLinearFilter;
             textureMap.set('railing_alpha', alphaTex);
             resolve();
         }, undefined, () => resolve());

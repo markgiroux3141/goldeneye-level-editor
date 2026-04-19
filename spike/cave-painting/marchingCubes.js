@@ -1,13 +1,16 @@
-// Marching cubes for a single block of a DensityField.
+// Marching cubes for a single chunk of a sparse DensityField.
 // Standard Paul Bourke edge/tri tables. Non-indexed output.
 //
 // Convention:
 //   cubeIndex bit c is set if the corner's density < ISO (air side).
 //   This matches Bourke's reference tables.
 //   Outward-facing surface normal is taken as -normalize(gradient(density)) so it
-//   always points from solid into air. We use DoubleSide material on the spike so
-//   winding-order correctness isn't critical; lighting still comes out right because
-//   normals come from the density gradient, not triangle cross-products.
+//   always points from solid into air. With FrontSide material, the face that is
+//   visible from inside the cavity is the one with normal pointing at the viewer,
+//   which is what we want.
+//
+// Reads corners through a ChunkWindow (see DensityField.buildChunkWindow): 8
+// chunks prefetched once, per-corner reads are typed-array lookups.
 
 const ISO = 0.0;
 
@@ -320,30 +323,42 @@ const TRI_TABLE = new Int8Array([
     -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
 ]);
 
-// Evaluate density gradient at corner (i,j,k) via central difference.
-// Uses clamped neighbours so boundary corners still get a valid gradient.
-function cornerGradient(field, i, j, k, out) {
-    const c = field.corners;
-    const iL = i > 0 ? i - 1 : i;
-    const iR = i < c - 1 ? i + 1 : i;
-    const jL = j > 0 ? j - 1 : j;
-    const jR = j < c - 1 ? j + 1 : j;
-    const kL = k > 0 ? k - 1 : k;
-    const kR = k < c - 1 ? k + 1 : k;
-    out[0] = field.get(iR, j, k) - field.get(iL, j, k);
-    out[1] = field.get(i, jR, k) - field.get(i, jL, k);
-    out[2] = field.get(i, j, kR) - field.get(i, j, kL);
+// Evaluate density gradient at window-local corner (li,lj,lk) via central
+// difference. Clamped to [0..chunkSize] so outer-window corners still get a
+// valid (one-sided) gradient.
+function cornerGradientWindow(window, li, lj, lk, out) {
+    const bs = window.chunkSize;
+    const iL = li > 0  ? li - 1 : li;
+    const iR = li < bs ? li + 1 : li;
+    const jL = lj > 0  ? lj - 1 : lj;
+    const jR = lj < bs ? lj + 1 : lj;
+    const kL = lk > 0  ? lk - 1 : lk;
+    const kR = lk < bs ? lk + 1 : lk;
+    out[0] = window.getCorner(iR, lj, lk) - window.getCorner(iL, lj, lk);
+    out[1] = window.getCorner(li, jR, lk) - window.getCorner(li, jL, lk);
+    out[2] = window.getCorner(li, lj, kR) - window.getCorner(li, lj, kL);
 }
 
-// Build mesh geometry for a single block. Returns { positions, normals } as Float32Arrays,
-// ready for THREE.BufferGeometry. Returns null if the block is entirely above or below iso.
-export function meshBlock(field, bi, bj, bk) {
-    const bs = field.blockSize;
-    const i0 = bi * bs, j0 = bj * bs, k0 = bk * bs;
-    const i1 = i0 + bs, j1 = j0 + bs, k1 = k0 + bs; // exclusive on cells, inclusive on corners
+// UV projection scale: 1 texture tile per TEX_TILE_METERS world meters.
+// N64-style tiling; a 32×32 texture stretched over 2 m reads as ~16 texels/m.
+const TEX_TILE_METERS = 2.0;
+const UV_SCALE = 1.0 / TEX_TILE_METERS;
 
-    const vs = field.voxelSize;
-    const ox = field.origin[0], oy = field.origin[1], oz = field.origin[2];
+// Build mesh geometry for a single chunk. Returns { positions, normals, uvs }
+// as Float32Arrays, ready for THREE.BufferGeometry. Returns null if the chunk
+// is entirely above or below iso (no surface intersection).
+//
+// UV generation: per-triangle dominant-axis projection (triplanar baked to
+// per-vertex UVs). Each triangle's face normal picks the projection plane
+// (YZ / XZ / XY), then world-space coords on that plane become UVs. Output
+// is non-indexed so each vertex has exactly one UV — GLB-friendly.
+export function meshChunk(window, cx, cy, cz, voxelSize) {
+    const bs = window.chunkSize; // 16 cells / chunk; corners accessed in [0..bs] inclusive
+
+    // World-space origin of chunk's corner(0,0,0).
+    const ox = cx * bs * voxelSize;
+    const oy = cy * bs * voxelSize;
+    const oz = cz * bs * voxelSize;
 
     // Scratch buffers reused for each cell.
     const cornerVals = new Float32Array(8);
@@ -355,6 +370,7 @@ export function meshBlock(field, bi, bj, bk) {
     let capacity = 1024 * 3; // vertices (3 floats each)
     let positions = new Float32Array(capacity * 3);
     let normals = new Float32Array(capacity * 3);
+    let uvs = new Float32Array(capacity * 2);
     let vertCount = 0;
 
     function ensureCapacity(extraVerts) {
@@ -362,30 +378,32 @@ export function meshBlock(field, bi, bj, bk) {
         while (vertCount + extraVerts > capacity) capacity *= 2;
         const p = new Float32Array(capacity * 3);
         const n = new Float32Array(capacity * 3);
-        p.set(positions); n.set(normals);
-        positions = p; normals = n;
+        const u = new Float32Array(capacity * 2);
+        p.set(positions); n.set(normals); u.set(uvs);
+        positions = p; normals = n; uvs = u;
     }
 
-    for (let k = k0; k < k1; k++) {
-        for (let j = j0; j < j1; j++) {
-            for (let i = i0; i < i1; i++) {
+    const gTmp = [0, 0, 0];
+
+    for (let lk = 0; lk < bs; lk++) {
+        for (let lj = 0; lj < bs; lj++) {
+            for (let li = 0; li < bs; li++) {
                 // Sample 8 corners.
                 let cubeIndex = 0;
                 for (let c = 0; c < 8; c++) {
                     const [di, dj, dk] = CORNER_OFFSETS[c];
-                    const v = field.get(i + di, j + dj, k + dk);
+                    const v = window.getCorner(li + di, lj + dj, lk + dk);
                     cornerVals[c] = v;
-                    if (v > ISO) cubeIndex |= (1 << c);
+                    if (v < ISO) cubeIndex |= (1 << c);
                 }
 
                 const edgeMask = EDGE_TABLE[cubeIndex];
                 if (edgeMask === 0) continue;
 
                 // Gradient at each corner via central difference for smooth normals.
-                const gTmp = [0, 0, 0];
                 for (let c = 0; c < 8; c++) {
                     const [di, dj, dk] = CORNER_OFFSETS[c];
-                    cornerGradient(field, i + di, j + dj, k + dk, gTmp);
+                    cornerGradientWindow(window, li + di, lj + dj, lk + dk, gTmp);
                     cornerGrads[c * 3    ] = gTmp[0];
                     cornerGrads[c * 3 + 1] = gTmp[1];
                     cornerGrads[c * 3 + 2] = gTmp[2];
@@ -405,13 +423,13 @@ export function meshBlock(field, bi, bj, bk) {
                     }
                     const [di0, dj0, dk0] = CORNER_OFFSETS[c0];
                     const [di1, dj1, dk1] = CORNER_OFFSETS[c1];
-                    // Interpolated voxel-space position.
-                    const pi = (i + di0) + t * (di1 - di0);
-                    const pj = (j + dj0) + t * (dj1 - dj0);
-                    const pk = (k + dk0) + t * (dk1 - dk0);
-                    edgePos[e * 3    ] = ox + pi * vs;
-                    edgePos[e * 3 + 1] = oy + pj * vs;
-                    edgePos[e * 3 + 2] = oz + pk * vs;
+                    // Interpolated local-voxel-space position → world.
+                    const pi = (li + di0) + t * (di1 - di0);
+                    const pj = (lj + dj0) + t * (dj1 - dj0);
+                    const pk = (lk + dk0) + t * (dk1 - dk0);
+                    edgePos[e * 3    ] = ox + pi * voxelSize;
+                    edgePos[e * 3 + 1] = oy + pj * voxelSize;
+                    edgePos[e * 3 + 2] = oz + pk * voxelSize;
 
                     // Interpolated gradient → outward normal = -grad, normalized.
                     const gx = cornerGrads[c0 * 3    ] + t * (cornerGrads[c1 * 3    ] - cornerGrads[c0 * 3    ]);
@@ -435,15 +453,12 @@ export function meshBlock(field, bi, bj, bk) {
 
                     ensureCapacity(3);
                     const p = vertCount * 3;
-                    positions[p     ] = edgePos[e0 * 3    ];
-                    positions[p + 1 ] = edgePos[e0 * 3 + 1];
-                    positions[p + 2 ] = edgePos[e0 * 3 + 2];
-                    positions[p + 3 ] = edgePos[e1 * 3    ];
-                    positions[p + 4 ] = edgePos[e1 * 3 + 1];
-                    positions[p + 5 ] = edgePos[e1 * 3 + 2];
-                    positions[p + 6 ] = edgePos[e2 * 3    ];
-                    positions[p + 7 ] = edgePos[e2 * 3 + 1];
-                    positions[p + 8 ] = edgePos[e2 * 3 + 2];
+                    const p0x = edgePos[e0 * 3    ], p0y = edgePos[e0 * 3 + 1], p0z = edgePos[e0 * 3 + 2];
+                    const p1x = edgePos[e1 * 3    ], p1y = edgePos[e1 * 3 + 1], p1z = edgePos[e1 * 3 + 2];
+                    const p2x = edgePos[e2 * 3    ], p2y = edgePos[e2 * 3 + 1], p2z = edgePos[e2 * 3 + 2];
+                    positions[p    ] = p0x; positions[p + 1] = p0y; positions[p + 2] = p0z;
+                    positions[p + 3] = p1x; positions[p + 4] = p1y; positions[p + 5] = p1z;
+                    positions[p + 6] = p2x; positions[p + 7] = p2y; positions[p + 8] = p2z;
 
                     normals[p     ] = edgeNrm[e0 * 3    ];
                     normals[p + 1 ] = edgeNrm[e0 * 3 + 1];
@@ -454,6 +469,39 @@ export function meshBlock(field, bi, bj, bk) {
                     normals[p + 6 ] = edgeNrm[e2 * 3    ];
                     normals[p + 7 ] = edgeNrm[e2 * 3 + 1];
                     normals[p + 8 ] = edgeNrm[e2 * 3 + 2];
+
+                    // Face normal → dominant-axis projection for UVs.
+                    const ex0 = p1x - p0x, ey0 = p1y - p0y, ez0 = p1z - p0z;
+                    const ex1 = p2x - p0x, ey1 = p2y - p0y, ez1 = p2z - p0z;
+                    const fnx = ey0 * ez1 - ez0 * ey1;
+                    const fny = ez0 * ex1 - ex0 * ez1;
+                    const fnz = ex0 * ey1 - ey0 * ex1;
+                    const absX = Math.abs(fnx), absY = Math.abs(fny), absZ = Math.abs(fnz);
+
+                    const u = vertCount * 2;
+                    let u0, v0uv, u1, v1uv, u2, v2uv;
+                    if (absX >= absY && absX >= absZ) {
+                        // YZ plane. Flip U with normal sign so texture reads consistently.
+                        const s = fnx < 0 ? -1 : 1;
+                        u0 = p0z * s; v0uv = p0y;
+                        u1 = p1z * s; v1uv = p1y;
+                        u2 = p2z * s; v2uv = p2y;
+                    } else if (absY >= absZ) {
+                        // XZ plane.
+                        const s = fny < 0 ? -1 : 1;
+                        u0 = p0x; v0uv = p0z * s;
+                        u1 = p1x; v1uv = p1z * s;
+                        u2 = p2x; v2uv = p2z * s;
+                    } else {
+                        // XY plane.
+                        const s = fnz < 0 ? -1 : 1;
+                        u0 = p0x * s; v0uv = p0y;
+                        u1 = p1x * s; v1uv = p1y;
+                        u2 = p2x * s; v2uv = p2y;
+                    }
+                    uvs[u    ] = u0 * UV_SCALE; uvs[u + 1] = v0uv * UV_SCALE;
+                    uvs[u + 2] = u1 * UV_SCALE; uvs[u + 3] = v1uv * UV_SCALE;
+                    uvs[u + 4] = u2 * UV_SCALE; uvs[u + 5] = v2uv * UV_SCALE;
 
                     vertCount += 3;
                 }
@@ -467,6 +515,7 @@ export function meshBlock(field, bi, bj, bk) {
     return {
         positions: positions.slice(0, vertCount * 3),
         normals: normals.slice(0, vertCount * 3),
+        uvs: uvs.slice(0, vertCount * 2),
         vertCount,
     };
 }

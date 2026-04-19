@@ -1,161 +1,228 @@
-// 3D density field: Float32Array with 1 scalar per voxel corner sample.
+// Sparse-chunk 3D density field. One scalar per voxel corner.
 // Convention: density > 0 = solid, density < 0 = air, iso-surface at 0.
 //
-// Partitioned into fixed-size "blocks" so brush strokes only re-mesh the
-// blocks they touch. Each block is BLOCK_SIZE cells on a side. A block that
-// owns cells [bi*BS .. bi*BS+BS) reads corner samples [bi*BS .. bi*BS+BS]
-// (inclusive on max side) — that +1 overlap with the neighbor block is
-// what avoids seams without explicit stitching.
+// Storage: Map<packedKey, Float32Array(4096)>. Each chunk owns 16 corners
+// along each axis. Chunks are allocated on first write; reads from unallocated
+// chunks return `defaultDensity` (solid rock by default). World is unbounded
+// — the player can carve in any direction.
+//
+// Seam handling: meshing chunk (cx,cy,cz) covers cells [0..15] which need
+// corners [0..16] per axis. Corner 16 of chunk N = corner 0 of chunk N+1, so
+// meshing reads from up to 8 chunks (the chunk itself + its +x/+y/+z/+xy/+xz
+// /+yz/+xyz neighbors). `buildChunkWindow` prefetches all 8 so per-corner
+// reads are O(1) typed-array lookups.
+//
+// Rust port notes:
+//   - `chunks` → HashMap<(i32,i32,i32), Box<[f32; 4096]>> (hashbrown/ahash).
+//   - `buildChunkWindow` → [Option<&[f32; 4096]>; 8].
+//   - Per-chunk meshing is embarrassingly parallel (rayon::par_iter).
+//   - Brush writes parallelize per chunk, sequential within a chunk.
 
 import { fbm3D } from './noise3D.js';
 
+export const CHUNK_SIZE = 16;           // corners per chunk axis
+const CHUNK_VOLUME = CHUNK_SIZE ** 3;   // 4096
+
+// Pack (cx,cy,cz) into a Number. 17 bits per axis × 3 = 51 bits, within safe int range.
+// Allowed coord range: [-65536, +65536).
+const KEY_BIAS = 1 << 16;
+const KEY_MUL = 1 << 17;
+
+export function chunkKey(cx, cy, cz) {
+    return ((cx + KEY_BIAS) * KEY_MUL + (cy + KEY_BIAS)) * KEY_MUL + (cz + KEY_BIAS);
+}
+
+function unpackKey(key) {
+    const cz = (key % KEY_MUL) - KEY_BIAS;
+    const t = Math.floor(key / KEY_MUL);
+    const cy = (t % KEY_MUL) - KEY_BIAS;
+    const cx = Math.floor(t / KEY_MUL) - KEY_BIAS;
+    return { cx, cy, cz };
+}
+
 export class DensityField {
-    constructor({ resolution = 64, voxelSize = 0.2, blockSize = 16, origin = [0, 0, 0] } = {}) {
-        this.res = resolution;                // number of CELLS per axis; corner samples = res+1
-        this.corners = resolution + 1;         // corner-sample count per axis
+    constructor({ voxelSize = 0.2, defaultDensity = 1.0 } = {}) {
+        this.chunkSize = CHUNK_SIZE;
         this.voxelSize = voxelSize;
-        this.blockSize = blockSize;
-        this.blocksPerAxis = resolution / blockSize;
-        if (!Number.isInteger(this.blocksPerAxis)) {
-            throw new Error(`resolution (${resolution}) must be a multiple of blockSize (${blockSize})`);
+        this.defaultDensity = defaultDensity;
+        this.chunks = new Map();
+        this.dirtyChunks = new Set();
+    }
+
+    // --- Chunk accessors ---
+
+    getOrCreateChunk(cx, cy, cz) {
+        const key = chunkKey(cx, cy, cz);
+        let chunk = this.chunks.get(key);
+        if (!chunk) {
+            chunk = new Float32Array(CHUNK_VOLUME);
+            chunk.fill(this.defaultDensity);
+            this.chunks.set(key, chunk);
         }
-        this.origin = origin.slice(); // world-space position of sample (0,0,0)
-
-        // Samples are corner-indexed: corners^3 floats.
-        this.data = new Float32Array(this.corners * this.corners * this.corners);
-
-        // Dirty set, one boolean per block.
-        const nBlocks = this.blocksPerAxis ** 3;
-        this.dirty = new Uint8Array(nBlocks);
+        return chunk;
     }
 
-    idx(i, j, k) {
-        return i + this.corners * (j + this.corners * k);
+    getChunk(cx, cy, cz) {
+        return this.chunks.get(chunkKey(cx, cy, cz)) || null;
     }
 
-    get(i, j, k) {
-        return this.data[i + this.corners * (j + this.corners * k)];
+    getCorner(i, j, k) {
+        const cx = Math.floor(i / CHUNK_SIZE);
+        const cy = Math.floor(j / CHUNK_SIZE);
+        const cz = Math.floor(k / CHUNK_SIZE);
+        const chunk = this.chunks.get(chunkKey(cx, cy, cz));
+        if (!chunk) return this.defaultDensity;
+        const li = i - cx * CHUNK_SIZE;
+        const lj = j - cy * CHUNK_SIZE;
+        const lk = k - cz * CHUNK_SIZE;
+        return chunk[li + CHUNK_SIZE * (lj + CHUNK_SIZE * lk)];
     }
 
-    set(i, j, k, v) {
-        this.data[i + this.corners * (j + this.corners * k)] = v;
+    setCorner(i, j, k, v) {
+        const cx = Math.floor(i / CHUNK_SIZE);
+        const cy = Math.floor(j / CHUNK_SIZE);
+        const cz = Math.floor(k / CHUNK_SIZE);
+        const chunk = this.getOrCreateChunk(cx, cy, cz);
+        const li = i - cx * CHUNK_SIZE;
+        const lj = j - cy * CHUNK_SIZE;
+        const lk = k - cz * CHUNK_SIZE;
+        chunk[li + CHUNK_SIZE * (lj + CHUNK_SIZE * lk)] = v;
     }
 
-    blockIdx(bi, bj, bk) {
-        return bi + this.blocksPerAxis * (bj + this.blocksPerAxis * bk);
-    }
+    // --- Coordinate conversion ---
 
-    // World-space <-> sample-index-space.
     worldToVoxel(x, y, z) {
-        return {
-            x: (x - this.origin[0]) / this.voxelSize,
-            y: (y - this.origin[1]) / this.voxelSize,
-            z: (z - this.origin[2]) / this.voxelSize,
-        };
+        return { x: x / this.voxelSize, y: y / this.voxelSize, z: z / this.voxelSize };
     }
 
     voxelToWorld(i, j, k) {
-        return {
-            x: this.origin[0] + i * this.voxelSize,
-            y: this.origin[1] + j * this.voxelSize,
-            z: this.origin[2] + k * this.voxelSize,
-        };
+        return { x: i * this.voxelSize, y: j * this.voxelSize, z: k * this.voxelSize };
     }
 
-    // World-space AABB of the whole field (min, max corners).
-    getWorldBounds() {
-        const s = this.res * this.voxelSize;
-        return {
-            min: [this.origin[0], this.origin[1], this.origin[2]],
-            max: [this.origin[0] + s, this.origin[1] + s, this.origin[2] + s],
-        };
-    }
+    // --- Dirty tracking ---
 
-    // Mark blocks as dirty that overlap a world-space AABB.
-    // Includes adjacent blocks on edge touches to avoid visible pops.
+    // Mark all chunks affected by a world AABB. Low-side pad of 1 chunk is
+    // needed because chunk N reads its corner[16] = chunk (N+1)'s corner[0];
+    // modifying chunk (N+1)'s corner[0] means chunk N's mesh is stale too.
+    // No high-side pad is needed.
     markDirtyAABB(minX, minY, minZ, maxX, maxY, maxZ) {
-        const vMin = this.worldToVoxel(minX, minY, minZ);
-        const vMax = this.worldToVoxel(maxX, maxY, maxZ);
+        const vs = this.voxelSize;
+        const bs = CHUNK_SIZE;
+        const iMin = Math.floor(minX / vs), iMax = Math.ceil(maxX / vs);
+        const jMin = Math.floor(minY / vs), jMax = Math.ceil(maxY / vs);
+        const kMin = Math.floor(minZ / vs), kMax = Math.ceil(maxZ / vs);
 
-        const bs = this.blockSize;
-        const nb = this.blocksPerAxis;
+        const cxLo = Math.floor(iMin / bs) - 1;
+        const cyLo = Math.floor(jMin / bs) - 1;
+        const czLo = Math.floor(kMin / bs) - 1;
+        const cxHi = Math.floor(iMax / bs);
+        const cyHi = Math.floor(jMax / bs);
+        const czHi = Math.floor(kMax / bs);
 
-        const biMin = Math.max(0, Math.floor(vMin.x / bs) - 1);
-        const bjMin = Math.max(0, Math.floor(vMin.y / bs) - 1);
-        const bkMin = Math.max(0, Math.floor(vMin.z / bs) - 1);
-        const biMax = Math.min(nb - 1, Math.floor(vMax.x / bs));
-        const bjMax = Math.min(nb - 1, Math.floor(vMax.y / bs));
-        const bkMax = Math.min(nb - 1, Math.floor(vMax.z / bs));
-
-        for (let bk = bkMin; bk <= bkMax; bk++) {
-            for (let bj = bjMin; bj <= bjMax; bj++) {
-                for (let bi = biMin; bi <= biMax; bi++) {
-                    this.dirty[this.blockIdx(bi, bj, bk)] = 1;
+        for (let cz = czLo; cz <= czHi; cz++) {
+            for (let cy = cyLo; cy <= cyHi; cy++) {
+                for (let cx = cxLo; cx <= cxHi; cx++) {
+                    this.dirtyChunks.add(chunkKey(cx, cy, cz));
                 }
             }
         }
     }
 
-    markAllDirty() {
-        this.dirty.fill(1);
-    }
-
-    // Consume the dirty set. callback(bi, bj, bk) is invoked for each dirty block.
-    // Returns count of blocks flushed.
     flushDirty(callback) {
         let n = 0;
-        const nb = this.blocksPerAxis;
-        for (let bk = 0; bk < nb; bk++) {
-            for (let bj = 0; bj < nb; bj++) {
-                for (let bi = 0; bi < nb; bi++) {
-                    const idx = this.blockIdx(bi, bj, bk);
-                    if (this.dirty[idx]) {
-                        callback(bi, bj, bk);
-                        this.dirty[idx] = 0;
-                        n++;
-                    }
-                }
-            }
+        for (const key of this.dirtyChunks) {
+            const { cx, cy, cz } = unpackKey(key);
+            callback(cx, cy, cz);
+            n++;
         }
+        this.dirtyChunks.clear();
         return n;
     }
 
-    // Initialize as lumpy rock volume:
-    //   base > 0 throughout (solid), with large-scale FBM perturbation
-    //   and a soft fade near the outer surfaces so the edges look rounded/eroded.
-    initLumpyRock({ base = 1.0, fbmAmp = 0.6, fbmFreq = 0.04 } = {}) {
-        const c = this.corners;
-        const data = this.data;
+    // --- Meshing support ---
+
+    // Build a read-only window giving O(1) access to any corner in local
+    // coords [0..16]³ of chunk (cx,cy,cz). Fetches the 8 chunks at
+    // (cx..cx+1, cy..cy+1, cz..cz+1) once. Missing chunks → defaultDensity.
+    buildChunkWindow(cx, cy, cz) {
+        const m = this.chunks;
+        const c000 = m.get(chunkKey(cx    , cy    , cz    )) || null;
+        const c100 = m.get(chunkKey(cx + 1, cy    , cz    )) || null;
+        const c010 = m.get(chunkKey(cx    , cy + 1, cz    )) || null;
+        const c110 = m.get(chunkKey(cx + 1, cy + 1, cz    )) || null;
+        const c001 = m.get(chunkKey(cx    , cy    , cz + 1)) || null;
+        const c101 = m.get(chunkKey(cx + 1, cy    , cz + 1)) || null;
+        const c011 = m.get(chunkKey(cx    , cy + 1, cz + 1)) || null;
+        const c111 = m.get(chunkKey(cx + 1, cy + 1, cz + 1)) || null;
+        const chunks = [c000, c100, c010, c110, c001, c101, c011, c111];
+        const def = this.defaultDensity;
+        const bs = CHUNK_SIZE;
+        return {
+            chunkSize: bs,
+            // li,lj,lk in [0..bs] inclusive. Local coord = bs rolls to next chunk.
+            getCorner(li, lj, lk) {
+                const xi = (li >> 4) & 1;
+                const yi = (lj >> 4) & 1;
+                const zi = (lk >> 4) & 1;
+                const chunk = chunks[xi | (yi << 1) | (zi << 2)];
+                if (!chunk) return def;
+                const x = li & 15;
+                const y = lj & 15;
+                const z = lk & 15;
+                return chunk[x + bs * (y + bs * z)];
+            },
+        };
+    }
+
+    // --- Initialization ---
+
+    // Carve a noisy spherical cavity centered at `center` with ~`radius`.
+    // Density = distFromCenter - (radius + fbmDisplacement): positive outside
+    // (solid), negative inside (air), zero on the iso-surface. Only populates
+    // chunks near the shell; the rest of space stays defaulted to solid rock.
+    initHollowCavity({ center, radius, noiseAmp = 0.6, noiseFreq = 0.3 } = {}) {
+        const [ccx, ccy, ccz] = center;
         const vs = this.voxelSize;
-        const ox = this.origin[0], oy = this.origin[1], oz = this.origin[2];
-        const sizeWorld = this.res * vs;
-        const centerX = ox + sizeWorld / 2;
-        const centerY = oy + sizeWorld / 2;
-        const centerZ = oz + sizeWorld / 2;
-        const halfSize = sizeWorld / 2;
+        const bs = CHUNK_SIZE;
+        const margin = radius + noiseAmp + 1.0;
 
-        for (let k = 0; k < c; k++) {
-            for (let j = 0; j < c; j++) {
-                for (let i = 0; i < c; i++) {
-                    const wx = ox + i * vs;
-                    const wy = oy + j * vs;
-                    const wz = oz + k * vs;
+        const cxLo = Math.floor((ccx - margin) / vs / bs);
+        const cyLo = Math.floor((ccy - margin) / vs / bs);
+        const czLo = Math.floor((ccz - margin) / vs / bs);
+        const cxHi = Math.floor((ccx + margin) / vs / bs);
+        const cyHi = Math.floor((ccy + margin) / vs / bs);
+        const czHi = Math.floor((ccz + margin) / vs / bs);
 
-                    // Soft erosion toward the outer faces of the cube — produces
-                    // a rounded rocky lump rather than a perfect cube.
-                    const ndx = (wx - centerX) / halfSize;
-                    const ndy = (wy - centerY) / halfSize;
-                    const ndz = (wz - centerZ) / halfSize;
-                    const r = Math.max(Math.abs(ndx), Math.abs(ndy), Math.abs(ndz));
-                    const edgeFade = 1 - Math.max(0, (r - 0.65) / 0.35); // 1 inside, 0 at the cube surface
-
-                    const n = fbm3D(wx * fbmFreq, wy * fbmFreq, wz * fbmFreq, 4);
-                    const v = base * edgeFade + fbmAmp * n;
-
-                    data[i + c * (j + c * k)] = v;
+        for (let cz = czLo; cz <= czHi; cz++) {
+            for (let cy = cyLo; cy <= cyHi; cy++) {
+                for (let cx = cxLo; cx <= cxHi; cx++) {
+                    const chunk = this.getOrCreateChunk(cx, cy, cz);
+                    for (let lk = 0; lk < bs; lk++) {
+                        const wz = (cz * bs + lk) * vs;
+                        const dz = wz - ccz;
+                        for (let lj = 0; lj < bs; lj++) {
+                            const wy = (cy * bs + lj) * vs;
+                            const dy = wy - ccy;
+                            for (let li = 0; li < bs; li++) {
+                                const wx = (cx * bs + li) * vs;
+                                const dx = wx - ccx;
+                                const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                                const disp = fbm3D(wx * noiseFreq, wy * noiseFreq, wz * noiseFreq, 4) * noiseAmp;
+                                chunk[li + bs * (lj + bs * lk)] = d - (radius + disp);
+                            }
+                        }
+                    }
+                    this.dirtyChunks.add(chunkKey(cx, cy, cz));
                 }
             }
         }
-        this.markAllDirty();
+        // Also dirty the low-side neighbors so their seams update.
+        for (let cz = czLo - 1; cz <= czHi; cz++) {
+            for (let cy = cyLo - 1; cy <= cyHi; cy++) {
+                for (let cx = cxLo - 1; cx <= cxHi; cx++) {
+                    this.dirtyChunks.add(chunkKey(cx, cy, cz));
+                }
+            }
+        }
     }
 }

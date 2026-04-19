@@ -281,6 +281,11 @@ function createSubFaceBrush(op, depth) {
     }
 
     const newBrush = new BrushDef(state.csg.nextBrushId++, op, nx, ny, nz, nw, nh, nd);
+    const source = findBrushById(sel.brushId, sel.regionId);
+    if (source) {
+        const overrideKey = `${sel.axis}-${sel.side}`;
+        newBrush.schemeKey = source.schemeOverrides?.[overrideKey] || source.schemeKey;
+    }
     state.csg.brushes.push(newBrush);
     return newBrush;
 }
