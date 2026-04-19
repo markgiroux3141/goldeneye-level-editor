@@ -131,9 +131,35 @@ const brushPreviewMatSubtract = new THREE.MeshBasicMaterial({
 const brushPreviewMatAdd = new THREE.MeshBasicMaterial({
     color: 0x44ff66, wireframe: true, transparent: true, opacity: 0.6,
 });
+const brushPreviewMatSmooth = new THREE.MeshBasicMaterial({
+    color: 0x44ffdd, wireframe: true, transparent: true, opacity: 0.6,
+});
+const brushPreviewMatExpand = new THREE.MeshBasicMaterial({
+    color: 0xff8844, wireframe: true, transparent: true, opacity: 0.6,
+});
 const brushPreview = new THREE.Mesh(brushPreviewGeom, brushPreviewMatSubtract);
 brushPreview.visible = false;
 scene.add(brushPreview);
+
+// Flatten gizmo — flat horizontal circle (xz plane) shown in flatten mode.
+const flattenGizmoGeom = new THREE.BufferGeometry();
+{
+    const segs = 48;
+    const pts = new Float32Array(segs * 3);
+    for (let i = 0; i < segs; i++) {
+        const a = (i / segs) * Math.PI * 2;
+        pts[i * 3    ] = Math.cos(a);
+        pts[i * 3 + 1] = 0;
+        pts[i * 3 + 2] = Math.sin(a);
+    }
+    flattenGizmoGeom.setAttribute('position', new THREE.BufferAttribute(pts, 3));
+}
+const flattenGizmo = new THREE.LineLoop(
+    flattenGizmoGeom,
+    new THREE.LineBasicMaterial({ color: 0x44aaff, transparent: true, opacity: 0.7 })
+);
+flattenGizmo.visible = false;
+scene.add(flattenGizmo);
 
 // ---------- Brush state ----------
 
@@ -141,7 +167,7 @@ const brushState = {
     radius: 1.5,
     strength: 0.4,
     minRadius: 0.6,
-    maxRadius: 3.5,
+    maxRadius: 10.0,
     minStrength: 0.05,
     maxStrength: 2.0,
 };
@@ -212,6 +238,7 @@ function pickBrushTarget() {
 // ---------- Radius keybinds (+/-) ----------
 
 let brushGizmoVisible = true;
+let specialMode = null; // null | 'flatten' | 'smooth' — mutually exclusive with each other
 
 document.addEventListener('keydown', (e) => {
     if (e.code === 'Equal' || e.code === 'NumpadAdd') {
@@ -224,6 +251,12 @@ document.addEventListener('keydown', (e) => {
         brushState.strength = Math.max(brushState.minStrength, brushState.strength - 0.1);
     } else if (e.code === 'KeyG') {
         brushGizmoVisible = !brushGizmoVisible;
+    } else if (e.code === 'KeyF') {
+        specialMode = specialMode === 'flatten' ? null : 'flatten';
+    } else if (e.code === 'KeyR') {
+        specialMode = specialMode === 'smooth' ? null : 'smooth';
+    } else if (e.code === 'KeyE') {
+        specialMode = specialMode === 'expand' ? null : 'expand';
     }
 });
 
@@ -243,17 +276,30 @@ function loop() {
 
     // Brush preview — where the brush would hit.
     pickBrushTarget();
-    const mode = isShiftHeld() ? 'add' : 'subtract';
-    brushPreview.visible = isPointerLocked() && brushGizmoVisible;
-    brushPreview.position.copy(brushTarget);
+    let mode = isShiftHeld() ? 'add' : 'subtract';
+    if (specialMode) mode = specialMode;
+    const isFlatten = mode === 'flatten';
+    const isExpand = mode === 'expand';
+    // Expand is centered on the player (radial from camera); all others on the cursor hit.
+    const brushCenter = isExpand ? camera.position : brushTarget;
+    const gizmoVisible = isPointerLocked() && brushGizmoVisible;
+    brushPreview.visible = gizmoVisible && !isFlatten;
+    brushPreview.position.copy(brushCenter);
     brushPreview.scale.setScalar(brushState.radius);
-    brushPreview.material = (mode === 'add') ? brushPreviewMatAdd : brushPreviewMatSubtract;
+    brushPreview.material =
+        mode === 'add'    ? brushPreviewMatAdd    :
+        mode === 'smooth' ? brushPreviewMatSmooth :
+        mode === 'expand' ? brushPreviewMatExpand :
+                            brushPreviewMatSubtract;
+    flattenGizmo.visible = gizmoVisible && isFlatten;
+    flattenGizmo.position.copy(brushTarget);
+    flattenGizmo.scale.setScalar(brushState.radius);
 
     // Paint while mouse held.
     let remeshCount = 0;
     let remeshMs = 0;
     if (isPointerLocked() && isLeftMouseDown()) {
-        const changed = applyBrush(field, brushTarget, brushState.radius, brushState.strength, mode, dt);
+        const changed = applyBrush(field, brushCenter, brushState.radius, brushState.strength, mode, dt);
         if (changed) {
             const t0 = performance.now();
             field.flushDirty((cx, cy, cz) => {
