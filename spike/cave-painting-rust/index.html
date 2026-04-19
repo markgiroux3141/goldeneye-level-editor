@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Cave Painting Spike — Rust/WASM</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #0a0a10; font-family: monospace; }
+        canvas { display: block; }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 20px; height: 20px; pointer-events: none; display: none;
+        }
+        #crosshair::before, #crosshair::after {
+            content: ''; position: absolute; background: rgba(255,255,255,0.7);
+        }
+        #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+        #crosshair::after  { height: 2px; width: 100%; top: 50%; transform: translateY(-50%); }
+        #lock-prompt {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #aaa; font-size: 16px; text-align: center;
+        }
+        #info {
+            position: absolute; top: 10px; left: 10px; color: #aaa; font-size: 12px;
+            background: rgba(0,0,0,0.7); padding: 10px 14px; border-radius: 4px;
+            pointer-events: none; line-height: 1.6;
+        }
+        #info strong { color: #fff; }
+        #info .key { color: #ffcc44; }
+        #hud {
+            position: absolute; top: 10px; right: 10px; color: #0f0; font-size: 13px;
+            background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 4px;
+            pointer-events: none; line-height: 1.5;
+        }
+        #loading {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #0a0a10; color: #fff; font-size: 18px;
+            display: flex; align-items: center; justify-content: center; z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Loading WASM + generating density field...</div>
+    <div id="crosshair"></div>
+    <div id="lock-prompt">Click to enter</div>
+    <div id="info">
+        <strong>Cave Painting Spike (Rust/WASM)</strong><br>
+        <span class="key">WASD</span> Move &nbsp; <span class="key">Mouse</span> Look &nbsp; <span class="key">Space</span>/<span class="key">C</span> Up/Down<br>
+        <span class="key">Click+Hold</span> Carve &nbsp; <span class="key">Shift+Click</span> Add rock<br>
+        <span class="key">Scroll</span> / <span class="key">+ -</span> Brush radius &nbsp; <span class="key">[ ]</span> Strength<br>
+        <span class="key">F</span> Flatten &nbsp; <span class="key">R</span> Smooth &nbsp; <span class="key">E</span> Expand &nbsp; <span class="key">G</span> Toggle gizmo
+    </div>
+    <div id="hud">
+        Brush: <span id="hud-radius">1.2</span>m<br>
+        Strength: <span id="hud-strength">0.40</span><br>
+        Mode: <span id="hud-mode">-</span><br>
+        Remesh: <span id="hud-remesh">0 blk / 0.0ms</span>
+    </div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
