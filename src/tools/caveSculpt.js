@@ -15,7 +15,7 @@ import { WORLD_SCALE } from '../core/constants.js';
 import { isPointerLocked, reacquirePointerLock } from '../input/input.js';
 import { csgRegionMeshes, rebuildAffectedRegions } from '../mesh/csgMesh.js';
 import { getEntry, remeshDirty, buildCaveClipArray } from '../mesh/caveMesh.js';
-import { syncMouthToCaveExtent, placeExitRoomFromCaveHit, exitRoomAabbFromHit } from '../csg/csgActions.js';
+import { placeExitRoomFromCaveHit, exitRoomAabbFromHit } from '../csg/csgActions.js';
 
 const MODE_CODE = { subtract: 0, add: 1, flatten: 2, smooth: 3, expand: 4 };
 
