@@ -40,6 +40,7 @@ export const state = {
         // Confirmed CSG stairs (void brush + visual mesh descriptors)
         csgStairs: [],          // { id, voidBrushId, direction, stepCount, axis, side, facePos, selU0, selU1, floor, H, schemeKey, floorY }
         nextCsgStairId: 1,
+        nextCaveId: 1,          // CaveDef ids (owned by regions, so not a brush id)
         // Hole/door modal tool state
         holeMode: false,
         holeDoor: false,

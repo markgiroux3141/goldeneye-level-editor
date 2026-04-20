@@ -4,6 +4,7 @@ import { state } from '../state.js';
 import { on } from '../systems/EventBus.js';
 import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
 import { hotkeyManager } from '../input/HotkeyManager.js';
+import * as caveSculpt from '../tools/caveSculpt.js';
 
 const statusEl = document.getElementById('status');
 const toolInfoEl = document.getElementById('tool-info');
@@ -62,6 +63,7 @@ export function showMessage(msg) {
 
 // Returns the active tool's display label, taking CSG sub-modes into account.
 function currentToolLabel() {
+    if (caveSculpt.isSculpting()) return 'SCULPT';
     if (state.tool === 'csg') {
         if (state.csg.holeMode) return state.csg.holeDoor ? 'DOOR' : 'HOLE';
         return 'CSG';
@@ -77,6 +79,20 @@ export function updateHUD(camera) {
     const lightSettingsEl = document.getElementById('light-settings');
     if (lightSettingsEl) lightSettingsEl.style.display = 'none';
     const lines = [];
+
+    if (caveSculpt.isSculpting()) {
+        const s = caveSculpt.getSculptState();
+        const effMode = s.mode === 'subtract' && s.shiftDown ? 'add' : s.mode;
+        lines.push(`SCULPT \u2014 mode: ${effMode}`);
+        lines.push(`Radius: ${s.radius.toFixed(2)}  Strength: ${s.strength.toFixed(2)}`);
+        lines.push(`LMB carve, Shift+LMB add, F flatten, R smooth, E expand`);
+        lines.push(`Scroll=radius, [/]=strength, G=gizmo, H=csg, P=exit room, Esc/K=exit`);
+        lines.push(`Brushes: ${state.csg.brushes.length} (baked: ${state.csg.totalBakedBrushes}) | Platforms: ${state.platforms.length} | Stair Runs: ${state.stairRuns.length}`);
+        statusEl.innerHTML = lines.join('<br>');
+        const p = camera.position;
+        toolInfoEl.innerHTML = `Tool: SCULPT<br>Pos: ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`;
+        return;
+    }
 
     if (state.tool === 'light') {
         if (lightSettingsEl && state.selectedLightId != null) {

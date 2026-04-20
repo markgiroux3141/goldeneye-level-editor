@@ -33,6 +33,7 @@ import { handleIndoorKey } from './tools/indoorKeys.js';
 import { handleTerrainKey } from './tools/terrainKeys.js';
 import { initCSGWasm } from './core/csg/wasmCSG.js';
 import { initCaveWasm } from './core/cave/wasmCave.js';
+import * as caveSculpt from './tools/caveSculpt.js';
 
 // ============================================================
 // INIT
@@ -85,6 +86,8 @@ document.addEventListener('mousedown', (e) => {
         handleTerrainClick(e, generateTerrainMesh);
         return;
     }
+    // Sculpt mode eats LMB for brush application — skip normal click handling.
+    if (caveSculpt.isSculpting() && e.button === 0) return;
     handleIndoorClick(e, { gizmo, camera });
 });
 
@@ -100,6 +103,12 @@ document.addEventListener('wheel', (e) => {
     if (!isPointerLocked()) return;
 
     const delta = e.deltaY > 0 ? -1 : 1;
+
+    if (caveSculpt.isSculpting()) {
+        e.preventDefault();
+        caveSculpt.adjustRadius(delta * 0.15);
+        return;
+    }
 
     // Stair placement (simple-stair pre-click + C-connect both phases):
     // scroll adjusts the stair width preview and keeps the HUD input in sync.
@@ -452,6 +461,8 @@ function animate() {
         gizmoTarget = state.pointLights.find(l => l.id === state.selectedLightId) || null;
     }
     gizmo.update(gizmoTarget, camera);
+
+    caveSculpt.tick(camera, dt);
 
     updatePlatformPreview(camera);
     updateCSGSelectionPreview(camera);

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Hub-Walkway Spike</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #0a0a10; font-family: monospace; color: #ccc; }
+        #canvas { display: block; width: 100vw; height: 100vh; }
+        #info {
+            position: absolute; top: 10px; left: 10px; font-size: 12px;
+            background: rgba(0,0,0,0.7); padding: 10px 14px; border-radius: 4px;
+            pointer-events: none; line-height: 1.6; max-width: 440px;
+        }
+        #info strong { color: #fff; }
+        #info .key { color: #ffcc44; }
+        #status {
+            position: absolute; bottom: 10px; left: 10px; right: 10px; font-size: 12px;
+            background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 4px;
+            pointer-events: none;
+        }
+        #loading {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #0a0a10; color: #fff; font-size: 18px;
+            display: flex; align-items: center; justify-content: center; z-index: 100;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="loading">Loading textures…</div>
+    <div id="info">
+        <strong>Hub-Walkway Spike</strong><br>
+        Two-entity model: <em>hubs</em> (axis-aligned rectangles) connected by <em>walkways</em>.<br>
+        <span class="key">Click empty</span> — start hub · <span class="key">Click again</span> — set opposite corner<br>
+        <span class="key">Click hub edge</span> — start walkway (green ring = snap)<br>
+        <span class="key">Click second hub edge</span> — commit walkway<br>
+        <span class="key">Wheel (walkway)</span> — width · <span class="key">Wheel (idle)</span> — zoom<br>
+        <span class="key">Click inside hub</span> — select · <span class="key">↑/↓</span> — raise/lower · <span class="key">Del</span> — delete<br>
+        <span class="key">Middle-drag</span> pan · <span class="key">ESC</span> cancel / deselect
+    </div>
+    <div id="status"></div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

@@ -18,7 +18,8 @@ import {
 } from '../core/constants.js';
 import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
 import { showMessage } from '../hud/hud.js';
-import { updateEnvelopePreviews } from '../preview/envelopePreview.js';
+import { CaveDef } from '../core/cave/CaveDef.js';
+import { carveCaveSphereAt } from '../mesh/caveMesh.js';
 
 // ─── Constants ──────────────────────────────────────────────────────
 const PUSH_PULL_STEP = 4;
@@ -830,22 +831,252 @@ export function scaleSelectedFace(deltaU, deltaV) {
 
 // ─── Cave Envelope ──────────────────────────────────────────────────
 
-// Toggle the cave-envelope flag on the brush containing the selected face.
-// The envelope flag doesn't alter CSG evaluation yet (it flips which meshing
-// path owns the brush's interior — CSG still renders the outer shell).
-// Returns { ok, brush, enabled } for the caller to show feedback.
-export function toggleCaveEnvelope() {
+// Start a cave carved outward from the selected face. Creates a mouth
+// subtract brush (rectangular doorway through the wall) + a CaveDef owned
+// by the region + a proto half-sphere of voxel air just outside the wall.
+// The cave grows on sculpt; shell auto-grows to stay around it.
+const CAVE_MOUTH_W = 3;                         // WT along the face U axis
+const CAVE_MOUTH_H = 3;                         // WT along the face V axis
+const CAVE_MOUTH_DEPTH = WALL_THICKNESS + 1;    // punches through the wall (+1 WT buffer)
+const PROTO_CAVE_RADIUS_M = 0.5;                // meters
+const PROTO_CAVE_AMP = 0.15;
+const PROTO_CAVE_FREQ = 0.15;
+
+export function startCaveFromFace() {
     const sel = state.csg.selectedFace;
     if (!sel) return { ok: false, reason: 'no_selection' };
-    const brush = findBrushById(sel.brushId, sel.regionId);
-    if (!brush) return { ok: false, reason: 'no_brush' };
-    // Baked/shell brushes aren't user-editable and don't make sense as caves.
-    if (brush.id === 0 || !state.csg.brushes.includes(brush)) {
-        return { ok: false, reason: 'not_user_brush' };
+    if (sel.brushId === 0) return { ok: false, reason: 'baked_face' };
+
+    const anchorBrush = findBrushById(sel.brushId, sel.regionId);
+    if (!anchorBrush) return { ok: false, reason: 'no_brush' };
+    if (!state.csg.brushes.includes(anchorBrush)) return { ok: false, reason: 'not_user_brush' };
+    if (anchorBrush.op !== 'subtract') return { ok: false, reason: 'not_room_brush' };
+
+    const regionData = csgRegionMeshes.get(sel.regionId);
+    if (!regionData) return { ok: false, reason: 'no_region' };
+    const region = regionData.region;
+
+    // Footprint position on the face — center on the UV selection if any,
+    // else on the anchor brush's face center.
+    ensureSelectionBounds();
+    const cs = state.csg;
+    const info = getFaceUVInfo(anchorBrush, sel.axis);
+    let uCenter, vCenter;
+    if (cs.selSizeU > 0 || cs.selSizeV > 0) {
+        uCenter = (cs.selU0 + cs.selU1) / 2;
+        vCenter = (cs.selV0 + cs.selV1) / 2;
+    } else {
+        uCenter = (info.uMin + info.uMax) / 2;
+        vCenter = (info.vMin + info.vMax) / 2;
     }
-    brush.isCaveEnvelope = !brush.isCaveEnvelope;
-    updateEnvelopePreviews();
-    return { ok: true, brush, enabled: brush.isCaveEnvelope };
+    const u0 = Math.round(uCenter - CAVE_MOUTH_W / 2);
+    const v0 = Math.round(vCenter - CAVE_MOUTH_H / 2);
+    const u1 = u0 + CAVE_MOUTH_W;
+    const v1 = v0 + CAVE_MOUTH_H;
+
+    // Build the mouth brush AABB. Its inner face sits at `position` so it's
+    // coplanar with the anchor brush's face (CSG union eats the shared plane);
+    // its outer face extends CAVE_MOUTH_DEPTH past the wall so the new shell
+    // (grown by updateShell around cave.extentAabb) wraps cleanly behind it.
+    const { axis, side, position } = sel;
+    let mx, my, mz, mw, mh, md;
+    if (axis === 'x') {
+        mz = u0; my = v0; md = CAVE_MOUTH_W; mh = CAVE_MOUTH_H; mw = CAVE_MOUTH_DEPTH;
+        mx = side === 'max' ? position : position - CAVE_MOUTH_DEPTH;
+    } else if (axis === 'y') {
+        mx = u0; mz = v0; mw = CAVE_MOUTH_W; md = CAVE_MOUTH_H; mh = CAVE_MOUTH_DEPTH;
+        my = side === 'max' ? position : position - CAVE_MOUTH_DEPTH;
+    } else {
+        mx = u0; my = v0; mw = CAVE_MOUTH_W; mh = CAVE_MOUTH_H; md = CAVE_MOUTH_DEPTH;
+        mz = side === 'max' ? position : position - CAVE_MOUTH_DEPTH;
+    }
+    const mouth = new BrushDef(cs.nextBrushId++, 'subtract', mx, my, mz, mw, mh, md);
+    mouth.isCaveMouth = true;
+    mouth.schemeKey = anchorBrush.schemeKey;
+
+    // CaveDef — holds anchor + mouth link + live extent for shell auto-grow.
+    const cave = new CaveDef(cs.nextCaveId++, sel.regionId);
+    cave.anchorFace = { axis, side, position, u0, u1, v0, v1, anchorBrushId: anchorBrush.id };
+    cave.mouthBrushId = mouth.id;
+    mouth.caveId = cave.id;
+
+    // Seed extent AABB (world meters). Half-sphere center at the face's outer
+    // wall surface; full voxel sphere carved into the rock produces a dome
+    // visible through the mouth. Extent here becomes the shell's padding
+    // target so updateShell grows the region to enclose the cave.
+    const S = WORLD_SCALE;
+    const dir = side === 'max' ? 1 : -1;
+    const faceOuterN = (position + dir * WALL_THICKNESS) * S;  // wall outer surface along normal
+    const uMid = (u0 + u1) / 2 * S;
+    const vMid = (v0 + v1) / 2 * S;
+    const R = PROTO_CAVE_RADIUS_M;
+    const MARGIN = R;  // extra buffer so shell has room to contain sculpt growth
+    let aabbMin = [0, 0, 0], aabbMax = [0, 0, 0];
+    if (axis === 'x') {
+        const nMin = Math.min(faceOuterN, faceOuterN + dir * (R + MARGIN));
+        const nMax = Math.max(faceOuterN, faceOuterN + dir * (R + MARGIN));
+        aabbMin = [nMin, vMid - R - MARGIN, uMid - R - MARGIN];
+        aabbMax = [nMax, vMid + R + MARGIN, uMid + R + MARGIN];
+    } else if (axis === 'y') {
+        const nMin = Math.min(faceOuterN, faceOuterN + dir * (R + MARGIN));
+        const nMax = Math.max(faceOuterN, faceOuterN + dir * (R + MARGIN));
+        aabbMin = [uMid - R - MARGIN, nMin, vMid - R - MARGIN];
+        aabbMax = [uMid + R + MARGIN, nMax, vMid + R + MARGIN];
+    } else {
+        const nMin = Math.min(faceOuterN, faceOuterN + dir * (R + MARGIN));
+        const nMax = Math.max(faceOuterN, faceOuterN + dir * (R + MARGIN));
+        aabbMin = [uMid - R - MARGIN, vMid - R - MARGIN, nMin];
+        aabbMax = [uMid + R + MARGIN, vMid + R + MARGIN, nMax];
+    }
+    cave.extentAabb = {
+        minX: aabbMin[0], minY: aabbMin[1], minZ: aabbMin[2],
+        maxX: aabbMax[0], maxY: aabbMax[1], maxZ: aabbMax[2],
+    };
+    // Resize the freshly-created mouth to cover the cave's full extent so CSG
+    // carves the whole volume the cave voxels occupy (no tile-through-cave
+    // seams). Sync runs again during sculpt as extent grows.
+    // NB: this modifies mouth.x/y/z/w/h/d — the literal 3×3×2 dimensions set
+    // on construction above are immediately overwritten here.
+    // Proto init params consumed by caveMesh.js on first-time world creation.
+    let cX, cY, cZ;
+    if (axis === 'x') { cX = faceOuterN; cY = vMid; cZ = uMid; }
+    else if (axis === 'y') { cX = uMid; cY = faceOuterN; cZ = vMid; }
+    else { cX = uMid; cY = vMid; cZ = faceOuterN; }
+    cave.protoInit = { centerX: cX, centerY: cY, centerZ: cZ, radius: R, amp: PROTO_CAVE_AMP, freq: PROTO_CAVE_FREQ };
+
+    // Register. Mouth is a real CSG brush so it needs the normal brush path.
+    state.csg.brushes.push(mouth);
+    region.caves.push(cave);
+    assignBrushToRegionDirect(mouth.id, sel.regionId);
+    region.brushes.push(mouth);
+
+    syncMouthToCaveExtent(cave);
+    rebuildAffectedRegions([mouth.id]);
+    return { ok: true, cave, mouth };
+}
+
+// Place a 4×4×4 WT "exit room" subtract brush at the cave-wall hit position.
+// The new room joins the cave's anchor region (no new shell — the existing
+// region shell auto-grows via updateShell to contain it). Room is offset:
+// its face closest to the cave is coincident with the (axis-snapped) hit
+// plane; the rest of the room extends into the rock beyond. Visual
+// stitching (cave mesh bleeding into the room interior) is deferred — the
+// room is placed as data; carving cleanup happens at bake/export time.
+const EXIT_ROOM_SIZE_WT = 4;
+
+export function placeExitRoomFromCaveHit(cave, hitPoint, hitNormal) {
+    if (!cave) return { ok: false, reason: 'no_cave' };
+    const regionData = csgRegionMeshes.get(cave.regionId);
+    if (!regionData) return { ok: false, reason: 'no_region' };
+    const region = regionData.region;
+
+    // Snap the surface normal to the nearest cardinal axis — CSG brushes are
+    // AABBs, so the room's entry face has to be axis-aligned.
+    const nx = Math.abs(hitNormal.x), ny = Math.abs(hitNormal.y), nz = Math.abs(hitNormal.z);
+    let axis, sign;
+    if (nx >= ny && nx >= nz)      { axis = 'x'; sign = hitNormal.x >= 0 ? 1 : -1; }
+    else if (ny >= nz)             { axis = 'y'; sign = hitNormal.y >= 0 ? 1 : -1; }
+    else                           { axis = 'z'; sign = hitNormal.z >= 0 ? 1 : -1; }
+
+    const aabb = exitRoomAabbFromHit(hitPoint, axis, sign);
+
+    const room = new BrushDef(
+        state.csg.nextBrushId++, 'subtract',
+        aabb.x, aabb.y, aabb.z, aabb.w, aabb.h, aabb.d,
+    );
+    room.schemeKey = 'facility_white_tile';
+
+    state.csg.brushes.push(room);
+    region.brushes.push(room);
+    assignBrushToRegionDirect(room.id, region.id);
+
+    // Hollow out the cave voxels inside the new room so the cave mesh drops
+    // out and the room shows through. Sphere radius covers ~82% of the cube
+    // (inscribed + edge clearance); corners retain small cave nubs.
+    const s = WORLD_SCALE;
+    const ccx = (aabb.x + aabb.w / 2) * s;
+    const ccy = (aabb.y + aabb.h / 2) * s;
+    const ccz = (aabb.z + aabb.d / 2) * s;
+    const halfMaxM = Math.max(aabb.w, aabb.h, aabb.d) * s * 0.5;
+    const sphereR = halfMaxM * Math.SQRT2;
+    carveCaveSphereAt(cave, { x: ccx, y: ccy, z: ccz }, sphereR);
+
+    rebuildAffectedRegions([room.id]);
+    return { ok: true, brush: room, axis, side: sign > 0 ? 'max' : 'min' };
+}
+
+// Compute the exit-room AABB in WT space for a cave hit. Exported for the
+// sculpt preview — same math as placement so the wireframe exactly matches
+// what gets created.
+export function exitRoomAabbFromHit(hitPoint, axis, sign) {
+    const invS = 1 / WORLD_SCALE;
+    const hx = Math.round(hitPoint.x * invS);
+    const hy = Math.round(hitPoint.y * invS);
+    const hz = Math.round(hitPoint.z * invS);
+    const S = EXIT_ROOM_SIZE_WT;
+    const half = S / 2;
+    let rx, ry, rz, rw, rh, rd;
+    if (axis === 'x') {
+        ry = hy - half; rh = S;
+        rz = hz - half; rd = S;
+        if (sign > 0) { rx = hx - S; rw = S; }   // normal +x (air); room in -x (rock)
+        else          { rx = hx;     rw = S; }
+    } else if (axis === 'y') {
+        rx = hx - half; rw = S;
+        rz = hz - half; rd = S;
+        if (sign > 0) { ry = hy - S; rh = S; }
+        else          { ry = hy;     rh = S; }
+    } else {
+        rx = hx - half; rw = S;
+        ry = hy - half; rh = S;
+        if (sign > 0) { rz = hz - S; rd = S; }
+        else          { rz = hz;     rd = S; }
+    }
+    return { x: rx, y: ry, z: rz, w: rw, h: rh, d: rd };
+}
+
+// Resize a cave's mouth brush to cover its current extentAabb. Keeps the
+// inner face anchored at the wall (so the mouth never retreats into the
+// room), extends the outer face to the cave's far extent, and expands the
+// u/v footprint to cover the cave's wall projection. +1 WT buffer on all
+// growing sides so CSG carves a hair more than the voxel surface.
+//
+// Called at cave creation + before every debounced region rebuild during
+// sculpt so CSG always carves the full volume the cave occupies.
+export function syncMouthToCaveExtent(cave) {
+    if (!cave || cave.mouthBrushId == null) return;
+    if (!cave.anchorFace || !cave.extentAabb) return;
+    const mouth = state.csg.brushes.find(b => b.id === cave.mouthBrushId);
+    if (!mouth) return;
+
+    const invS = 1 / WORLD_SCALE;
+    const e = cave.extentAabb;
+    const { axis, side, position } = cave.anchorFace;
+    const BUF = 1;
+
+    const eMinX = Math.floor(e.minX * invS) - BUF;
+    const eMaxX = Math.ceil(e.maxX * invS) + BUF;
+    const eMinY = Math.floor(e.minY * invS) - BUF;
+    const eMaxY = Math.ceil(e.maxY * invS) + BUF;
+    const eMinZ = Math.floor(e.minZ * invS) - BUF;
+    const eMaxZ = Math.ceil(e.maxZ * invS) + BUF;
+
+    if (axis === 'x') {
+        mouth.y = eMinY; mouth.h = eMaxY - eMinY;
+        mouth.z = eMinZ; mouth.d = eMaxZ - eMinZ;
+        if (side === 'max') { mouth.x = position;              mouth.w = Math.max(1, eMaxX - position); }
+        else                { mouth.x = Math.min(eMinX, position - 1); mouth.w = position - mouth.x; }
+    } else if (axis === 'y') {
+        mouth.x = eMinX; mouth.w = eMaxX - eMinX;
+        mouth.z = eMinZ; mouth.d = eMaxZ - eMinZ;
+        if (side === 'max') { mouth.y = position;              mouth.h = Math.max(1, eMaxY - position); }
+        else                { mouth.y = Math.min(eMinY, position - 1); mouth.h = position - mouth.y; }
+    } else {
+        mouth.x = eMinX; mouth.w = eMaxX - eMinX;
+        mouth.y = eMinY; mouth.h = eMaxY - eMinY;
+        if (side === 'max') { mouth.z = position;              mouth.d = Math.max(1, eMaxZ - position); }
+        else                { mouth.z = Math.min(eMinZ, position - 1); mouth.d = position - mouth.z; }
+    }
 }
 
 // ─── Hole / Door Modal Tool ──────────────────────────────────────────

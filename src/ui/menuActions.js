@@ -6,7 +6,7 @@ import { state } from '../state.js';
 import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
 import { gridHelper } from '../scene/setup.js';
 import { setTool } from '../tools/ToolManager.js';
-import { setHoleMode, setFacePaintMode, toggleCaveEnvelope } from '../csg/csgActions.js';
+import { setHoleMode, setFacePaintMode, startCaveFromFace } from '../csg/csgActions.js';
 import { PLATFORM_STYLES } from '../geometry/platformStyles.js';
 import { exportSceneToGLB } from '../io/GLBExporter.js';
 
@@ -28,16 +28,16 @@ export function initMenuActions(cbs) {
         } else if (actionId === 'file:export_glb') {
             exportSceneToGLB();
             callbacks.showMessage('Exported level.glb');
-        } else if (actionId === 'brush:toggle_cave_envelope') {
-            const r = toggleCaveEnvelope();
+        } else if (actionId === 'brush:start_cave_from_face') {
+            const r = startCaveFromFace();
             if (r.ok) {
-                callbacks.showMessage(r.enabled
-                    ? `Brush ${r.brush.id} → cave envelope`
-                    : `Brush ${r.brush.id} → normal CSG`);
+                callbacks.showMessage(`Cave ${r.cave.id} started — press K to sculpt`);
             } else if (r.reason === 'no_selection' || r.reason === 'no_brush') {
-                callbacks.showMessage('Select a face first to mark its brush as cave envelope');
+                callbacks.showMessage('Select a face first to start a cave from it');
+            } else if (r.reason === 'not_room_brush') {
+                callbacks.showMessage('Caves start from room (subtract) brush faces');
             } else {
-                callbacks.showMessage('Baked/shell brushes cannot be cave envelopes');
+                callbacks.showMessage('Cannot start cave here');
             }
         }
     });

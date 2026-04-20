@@ -30,6 +30,7 @@ export class CSGRegion {
         this.brushes = [];               // BrushDef[] (the un-baked brushes)
         this.bakedBrushes = [];          // BrushDef[] (previously baked brushes, replayed each eval)
         this.totalBakedBrushes = 0;
+        this.caves = [];                 // CaveDef[] — voxel cavities carved outward from a face
     }
 
     // Auto-resize the shell to fit all subtractive brushes (baked + unbaked),
@@ -48,6 +49,16 @@ export class CSGRegion {
             if (b.op !== 'subtract') continue;
             minX = Math.min(minX, b.minX); minY = Math.min(minY, b.minY); minZ = Math.min(minZ, b.minZ);
             maxX = Math.max(maxX, b.maxX); maxY = Math.max(maxY, b.maxY); maxZ = Math.max(maxZ, b.maxZ);
+        }
+        // Pad the shell around each cave's current voxel extent so the cave's
+        // far-rock surround remains inside the region's solid volume. Extents
+        // are in world meters — convert back to WT (shell coords are WT-space).
+        for (const cave of this.caves) {
+            const a = cave.extentAabb;
+            if (!a) continue;
+            const invS = 1 / WORLD_SCALE;
+            minX = Math.min(minX, a.minX * invS); minY = Math.min(minY, a.minY * invS); minZ = Math.min(minZ, a.minZ * invS);
+            maxX = Math.max(maxX, a.maxX * invS); maxY = Math.max(maxY, a.maxY * invS); maxZ = Math.max(maxZ, a.maxZ * invS);
         }
         if (!isFinite(minX)) return;
 

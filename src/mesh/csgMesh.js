@@ -11,7 +11,8 @@ import { clusterBrushes, brushesOverlapOrTouch } from '../core/csg/regions.js';
 import { CSGRegion } from '../core/csg/CSGRegion.js';
 import { assignUVsAndZones } from '../core/csg/uvZones.js';
 import { getCSGMaterialsForScheme } from '../scene/materials.js';
-import { updateEnvelopePreviews } from '../preview/envelopePreview.js';
+import { syncCavesForRegion, disposeCavesForRegion, disposeAllCaves } from './caveMesh.js';
+import { isRegionHiddenForSculpt } from '../tools/caveSculpt.js';
 
 // Per-region mesh storage: Map<regionId, { mesh, faceIds, lastEvalMs, region }>
 export const csgRegionMeshes = new Map();
@@ -35,6 +36,10 @@ const _gridMaterial = new THREE.MeshStandardMaterial({
     flatShading: true, side: THREE.FrontSide, vertexColors: true,
 });
 
+// Disposes only the CSG region's mesh — NOT its cave voxel state. Cave
+// lifecycle is decoupled: caves live as long as their CSGRegion object does
+// (cleared via disposeAllCaves on full rebuilds, disposeCavesForRegion on
+// explicit region removal). Incremental mesh rebuilds preserve voxel data.
 function disposeRegion(data) {
     const regionId = data.region?.id;
     if (regionId != null) {
@@ -122,8 +127,10 @@ function buildRegionMesh(region) {
         lastEvalMs: timeMs,
         region,
     });
+    if (isRegionHiddenForSculpt(region.id)) mesh.visible = false;
     scene.add(mesh);
     scheduleEdgesUpdate(region.id);
+    syncCavesForRegion(region);
 }
 
 // ─── Full rebuild ────────────────────────────────────────────────────
@@ -132,6 +139,10 @@ export function rebuildAllCSG(brushes = state.csg.brushes) {
     // Tear down all existing region meshes
     for (const [, data] of csgRegionMeshes) disposeRegion(data);
     csgRegionMeshes.clear();
+
+    // Full rebuild replaces CSGRegion objects entirely — caves owned by the
+    // old region objects become orphaned, so dispose their CaveWorlds too.
+    disposeAllCaves();
 
     // Reset stable tracking maps
     regionMap.clear();
@@ -154,7 +165,6 @@ export function rebuildAllCSG(brushes = state.csg.brushes) {
         buildRegionMesh(region);
     }
 
-    updateEnvelopePreviews();
 }
 
 // ─── Incremental rebuild ─────────────────────────────────────────────
@@ -199,7 +209,6 @@ export function rebuildAffectedRegions(brushIds) {
         buildRegionMesh(region);
     }
 
-    updateEnvelopePreviews();
 }
 
 // ─── Brush-to-region assignment (for new brushes) ────────────────────
@@ -302,11 +311,13 @@ export function removeBrushFromRegion(brushId) {
     brushToRegion.delete(brushId);
 }
 
-// Remove a region mesh by id.
+// Remove a region mesh by id. Also tears down the region's caves since the
+// region itself is being dropped.
 export function removeCSGRegion(regionId) {
     const data = csgRegionMeshes.get(regionId);
     if (data) {
         disposeRegion(data);
         csgRegionMeshes.delete(regionId);
     }
+    disposeCavesForRegion(regionId);
 }

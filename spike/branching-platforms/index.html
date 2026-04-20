@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Branching Platforms Spike</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #0a0a10; font-family: monospace; color: #ccc; }
+        #canvas { display: block; width: 100vw; height: 100vh; }
+        #info {
+            position: absolute; top: 10px; left: 10px; font-size: 12px;
+            background: rgba(0,0,0,0.7); padding: 10px 14px; border-radius: 4px;
+            pointer-events: none; line-height: 1.6; max-width: 420px;
+        }
+        #info strong { color: #fff; }
+        #info .key { color: #ffcc44; }
+        #status {
+            position: absolute; bottom: 10px; left: 10px; right: 10px; font-size: 12px;
+            background: rgba(0,0,0,0.7); padding: 8px 12px; border-radius: 4px;
+            pointer-events: none;
+        }
+        #loading {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #0a0a10; color: #fff; font-size: 18px;
+            display: flex; align-items: center; justify-content: center; z-index: 100;
+        }
+        #hover-label {
+            position: absolute; font-size: 11px; font-weight: bold;
+            background: rgba(0,0,0,0.75); padding: 2px 6px; border-radius: 3px;
+            pointer-events: none; display: none; z-index: 50;
+            text-shadow: 0 0 3px black;
+        }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 18px; height: 18px; pointer-events: none; display: none; z-index: 40;
+        }
+        #crosshair::before, #crosshair::after {
+            content: ''; position: absolute; background: rgba(255,255,255,0.7);
+        }
+        #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+        #crosshair::after  { height: 2px; width: 100%; top: 50%; transform: translateY(-50%); }
+        #lock-prompt {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #aaa; font-size: 14px; text-align: center; display: none; z-index: 40;
+            background: rgba(0,0,0,0.55); padding: 8px 14px; border-radius: 4px;
+            pointer-events: none;
+        }
+        #mode-indicator {
+            position: absolute; top: 10px; right: 10px; font-size: 12px;
+            background: rgba(0,0,0,0.7); padding: 6px 10px; border-radius: 4px;
+            color: #ffcc44; pointer-events: none; z-index: 40;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="hover-label"></div>
+    <div id="crosshair"></div>
+    <div id="lock-prompt">Click to look around · Esc to release · V to exit 3D</div>
+    <div id="mode-indicator"></div>
+    <div id="loading">Loading textures…</div>
+    <div id="info">
+        <strong>Branching Platforms Spike</strong><br>
+        <span class="key">Click empty</span> — start segment · <span class="key">Click again</span> — set endpoint<br>
+        <span class="key">Snap targets</span>: vertex, midpoint, edge, perpendicular (green ring + label)<br>
+        <span class="key">Angle snap</span> — 15° increments · <span class="key">Hold Alt</span> — disable angle snap<br>
+        <span class="key">Wheel (PLACING)</span> — adjust width · <span class="key">Wheel (IDLE)</span> — zoom<br>
+        <span class="key">Click node</span> — select · <span class="key">↑/↓</span> — raise/lower · <span class="key">Del</span> — delete<br>
+        <span class="key">Middle-drag</span> — pan · <span class="key">ESC</span> — cancel / deselect<br>
+        <span class="key">Ctrl+Z</span> — undo last action · <span class="key">V</span> — toggle 3D fly view
+    </div>
+    <div id="status"></div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/",
+            "polygon-clipping": "https://esm.sh/polygon-clipping@0.15.3"
+        }
+    }
+    </script>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

@@ -12,6 +12,8 @@ import {
 } from '../actions.js';
 import { exportSceneToGLB } from '../io/GLBExporter.js';
 import * as csgActions from '../csg/csgActions.js';
+import * as caveSculpt from './caveSculpt.js';
+import { csgRegionMeshes } from '../mesh/csgMesh.js';
 import { rebuildCsgStair } from '../mesh/csgStairMesh.js';
 import {
     stairRunMeshes,
@@ -27,6 +29,103 @@ import { PointLight } from '../core/PointLight.js';
 import { WORLD_SCALE } from '../core/constants.js';
 
 export function handleIndoorKey(e, { gizmo, camera }) {
+    // ─── Cave sculpt mode consumes all keys while active ────────────
+    if (caveSculpt.isSculpting()) {
+        if (hotkeyManager.matches('escape', e)) {
+            e.preventDefault();
+            // Esc cancels the place-exit submode first, if active.
+            if (caveSculpt.isPlacingExit()) {
+                caveSculpt.togglePlaceExitMode();
+                showMessage('Exit room placement cancelled');
+                return;
+            }
+            caveSculpt.exitSculptMode();
+            showMessage('Sculpt mode exited');
+            return;
+        }
+        if (e.code === 'KeyK') {
+            e.preventDefault();
+            caveSculpt.exitSculptMode();
+            showMessage('Sculpt mode exited');
+            return;
+        }
+        if (e.code === 'KeyP') {
+            e.preventDefault();
+            const on = caveSculpt.togglePlaceExitMode();
+            showMessage(on
+                ? 'Place Exit Room: aim at cave wall, LMB to place (Esc to cancel)'
+                : 'Exit room placement cancelled');
+            return;
+        }
+        if (e.code === 'KeyF') {
+            e.preventDefault();
+            caveSculpt.toggleMode('flatten');
+            showMessage(`Sculpt: ${caveSculpt.getSculptState().mode}`);
+            return;
+        }
+        if (e.code === 'KeyR') {
+            e.preventDefault();
+            caveSculpt.toggleMode('smooth');
+            showMessage(`Sculpt: ${caveSculpt.getSculptState().mode}`);
+            return;
+        }
+        if (e.code === 'KeyE') {
+            e.preventDefault();
+            caveSculpt.toggleMode('expand');
+            showMessage(`Sculpt: ${caveSculpt.getSculptState().mode}`);
+            return;
+        }
+        if (e.code === 'BracketLeft') {
+            e.preventDefault();
+            caveSculpt.adjustStrength(-0.1);
+            return;
+        }
+        if (e.code === 'BracketRight') {
+            e.preventDefault();
+            caveSculpt.adjustStrength(0.1);
+            return;
+        }
+        if (e.code === 'KeyG') {
+            e.preventDefault();
+            const on = caveSculpt.toggleGizmoVisible();
+            showMessage(`Brush gizmo: ${on ? 'ON' : 'OFF'}`);
+            return;
+        }
+        if (e.code === 'KeyH') {
+            e.preventDefault();
+            const on = caveSculpt.toggleCsgVisible();
+            showMessage(`CSG mesh: ${on ? 'SHOWN (stale until exit)' : 'HIDDEN'}`);
+            return;
+        }
+        return;  // swallow every other key so CSG handlers don't fire
+    }
+
+    // K = enter sculpt mode on a cave in the selected region. If the selected
+    // face is a cave mouth, sculpt that cave; otherwise sculpt the first cave
+    // in the region.
+    if (e.code === 'KeyK' && isPointerLocked() && state.tool === 'csg') {
+        const sel = state.csg.selectedFace;
+        if (sel) {
+            const regionData = csgRegionMeshes.get(sel.regionId);
+            const region = regionData ? regionData.region : null;
+            if (region && region.caves.length > 0) {
+                const selBrush = state.csg.brushes.find(b => b.id === sel.brushId);
+                let cave = null;
+                if (selBrush && selBrush.isCaveMouth && selBrush.caveId != null) {
+                    cave = region.caves.find(c => c.id === selBrush.caveId) || null;
+                }
+                if (!cave) cave = region.caves[0];
+                e.preventDefault();
+                if (caveSculpt.enterSculptMode(sel.regionId, cave.id)) {
+                    showMessage('Sculpt mode — LMB carve, Shift+LMB add, F/R/E modes, Esc exit');
+                } else {
+                    showMessage('Could not enter sculpt mode');
+                }
+                return;
+            }
+        }
+    }
+
     // ─── Tool/mode entry hotkeys (Numpad 1-6) ───────────────────────
     // These fire from any current tool, so users can jump directly to any
     // mode without cycling. Each switches state.tool (and any sub-mode flags).
@@ -223,19 +322,22 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             showMessage('Baked');
             return;
         }
-        // J = toggle cave-envelope flag on the selected brush
-        if (hotkeyManager.matches('toggle_cave_envelope', e)) {
+        // J = start a cave from the selected face (punches a mouth + seeds a
+        // proto half-sphere of voxel air outside the wall).
+        if (hotkeyManager.matches('start_cave_from_face', e)) {
             e.preventDefault();
             saveUndoState();
-            const r = csgActions.toggleCaveEnvelope();
+            const r = csgActions.startCaveFromFace();
             if (r.ok) {
-                showMessage(r.enabled
-                    ? `Brush ${r.brush.id} \u2192 cave envelope`
-                    : `Brush ${r.brush.id} \u2192 normal CSG`);
+                showMessage(`Cave ${r.cave.id} started \u2014 press K to sculpt`);
             } else if (r.reason === 'no_selection' || r.reason === 'no_brush') {
-                showMessage('Select a face first to mark its brush as cave envelope');
+                showMessage('Select a face first to start a cave from it');
+            } else if (r.reason === 'not_room_brush') {
+                showMessage('Caves start from room (subtract) brush faces');
+            } else if (r.reason === 'baked_face') {
+                showMessage('Cannot start a cave on a baked face');
             } else {
-                showMessage('Baked/shell brushes cannot be cave envelopes');
+                showMessage('Cannot start cave here');
             }
             return;
         }

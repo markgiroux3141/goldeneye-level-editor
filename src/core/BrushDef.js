@@ -22,10 +22,11 @@ export class BrushDef {
         // Stair void brush (single envelope brush for deferred stair system)
         this.isStairVoid = false;
         this.stairDescriptorId = null; // links to csgStairs[] entry
-        // Cave-envelope brush: inside this AABB, a voxel density field takes
-        // over and the voxel iso-surface is clamped to the envelope walls.
-        // Set/cleared via toggleCaveEnvelope() in csgActions.js.
-        this.isCaveEnvelope = false;
+        // Cave mouth brush: subtract AABB that opens the wall for a CaveDef.
+        // Links to the cave via caveId; cave mouths are skipped by the wall
+        // split / stair logic so the voxel mesh behind is unobstructed.
+        this.isCaveMouth = false;
+        this.caveId = null;
         this.schemeKey = 'facility_white_tile';
         // Per-face scheme overrides: key = 'x-min'|'x-max'|'y-min'|'y-max'|'z-min'|'z-max',
         // value = scheme name string. Read by uvZones.js, falls back to schemeKey when absent.
@@ -68,7 +69,8 @@ export class BrushDef {
         b.stairCarveSign = this.stairCarveSign;
         b.isStairVoid = this.isStairVoid;
         b.stairDescriptorId = this.stairDescriptorId;
-        b.isCaveEnvelope = this.isCaveEnvelope;
+        b.isCaveMouth = this.isCaveMouth;
+        b.caveId = this.caveId;
         b.schemeKey = this.schemeKey;
         b.schemeOverrides = JSON.parse(JSON.stringify(this.schemeOverrides));
         b.triZoneOverrides = this.triZoneOverrides.map(o => ({ ...o }));
@@ -95,7 +97,10 @@ export class BrushDef {
             j.isStairVoid = true;
             j.stairDescriptorId = this.stairDescriptorId;
         }
-        if (this.isCaveEnvelope) j.isCaveEnvelope = true;
+        if (this.isCaveMouth) {
+            j.isCaveMouth = true;
+            if (this.caveId != null) j.caveId = this.caveId;
+        }
         if (this.schemeKey !== 'facility_white_tile') j.schemeKey = this.schemeKey;
         if (this.hasSchemeOverrides()) j.schemeOverrides = this.schemeOverrides;
         if (this.hasTriZoneOverrides()) j.triZoneOverrides = this.triZoneOverrides;
@@ -118,7 +123,10 @@ export class BrushDef {
             b.isStairVoid = true;
             b.stairDescriptorId = j.stairDescriptorId;
         }
-        if (j.isCaveEnvelope) b.isCaveEnvelope = true;
+        if (j.isCaveMouth) {
+            b.isCaveMouth = true;
+            if (j.caveId != null) b.caveId = j.caveId;
+        }
         if (j.schemeKey) b.schemeKey = j.schemeKey;
         if (j.schemeOverrides) b.schemeOverrides = j.schemeOverrides;
         if (j.triZoneOverrides) b.triZoneOverrides = j.triZoneOverrides;
