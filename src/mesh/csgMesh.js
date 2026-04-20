@@ -11,6 +11,7 @@ import { clusterBrushes, brushesOverlapOrTouch } from '../core/csg/regions.js';
 import { CSGRegion } from '../core/csg/CSGRegion.js';
 import { assignUVsAndZones } from '../core/csg/uvZones.js';
 import { getCSGMaterialsForScheme } from '../scene/materials.js';
+import { updateEnvelopePreviews } from '../preview/envelopePreview.js';
 
 // Per-region mesh storage: Map<regionId, { mesh, faceIds, lastEvalMs, region }>
 export const csgRegionMeshes = new Map();
@@ -152,6 +153,8 @@ export function rebuildAllCSG(brushes = state.csg.brushes) {
 
         buildRegionMesh(region);
     }
+
+    updateEnvelopePreviews();
 }
 
 // ─── Incremental rebuild ─────────────────────────────────────────────
@@ -195,6 +198,8 @@ export function rebuildAffectedRegions(brushIds) {
         // Rebuild just this region
         buildRegionMesh(region);
     }
+
+    updateEnvelopePreviews();
 }
 
 // ─── Brush-to-region assignment (for new brushes) ────────────────────

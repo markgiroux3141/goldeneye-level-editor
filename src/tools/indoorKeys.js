@@ -223,6 +223,22 @@ export function handleIndoorKey(e, { gizmo, camera }) {
             showMessage('Baked');
             return;
         }
+        // J = toggle cave-envelope flag on the selected brush
+        if (hotkeyManager.matches('toggle_cave_envelope', e)) {
+            e.preventDefault();
+            saveUndoState();
+            const r = csgActions.toggleCaveEnvelope();
+            if (r.ok) {
+                showMessage(r.enabled
+                    ? `Brush ${r.brush.id} \u2192 cave envelope`
+                    : `Brush ${r.brush.id} \u2192 normal CSG`);
+            } else if (r.reason === 'no_selection' || r.reason === 'no_brush') {
+                showMessage('Select a face first to mark its brush as cave envelope');
+            } else {
+                showMessage('Baked/shell brushes cannot be cave envelopes');
+            }
+            return;
+        }
         // [ / ] = scale (taper) selected face
         if (e.code === 'BracketLeft') {
             e.preventDefault();

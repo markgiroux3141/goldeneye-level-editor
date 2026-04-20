@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "copy-wasm": "node -e \"require('fs').copyFileSync('src/core/csg/wasm/csg_wasm_bg.wasm', 'dist/csg_wasm_bg.wasm')\"",
+    "copy-wasm": "node -e \"const fs=require('fs');fs.copyFileSync('src/core/csg/wasm/csg_wasm_bg.wasm','dist/csg_wasm_bg.wasm');fs.copyFileSync('src/core/cave/wasm/cave_wasm_bg.wasm','dist/cave_wasm_bg.wasm')\"",
     "build": "esbuild src/main.js --bundle --format=esm --sourcemap --outfile=dist/bundle.js && npm run copy-wasm",
     "dev": "esbuild src/main.js --bundle --format=esm --sourcemap --outfile=dist/bundle.js --watch & npm run copy-wasm"
   },

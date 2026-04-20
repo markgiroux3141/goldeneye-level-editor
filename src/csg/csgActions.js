@@ -18,6 +18,7 @@ import {
 } from '../core/constants.js';
 import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
 import { showMessage } from '../hud/hud.js';
+import { updateEnvelopePreviews } from '../preview/envelopePreview.js';
 
 // ─── Constants ──────────────────────────────────────────────────────
 const PUSH_PULL_STEP = 4;
@@ -825,6 +826,26 @@ export function scaleSelectedFace(deltaU, deltaV) {
     if (t.u === 0 && t.v === 0) delete brush.taper[faceKey];
 
     rebuildAffectedRegions([brush.id]);
+}
+
+// ─── Cave Envelope ──────────────────────────────────────────────────
+
+// Toggle the cave-envelope flag on the brush containing the selected face.
+// The envelope flag doesn't alter CSG evaluation yet (it flips which meshing
+// path owns the brush's interior — CSG still renders the outer shell).
+// Returns { ok, brush, enabled } for the caller to show feedback.
+export function toggleCaveEnvelope() {
+    const sel = state.csg.selectedFace;
+    if (!sel) return { ok: false, reason: 'no_selection' };
+    const brush = findBrushById(sel.brushId, sel.regionId);
+    if (!brush) return { ok: false, reason: 'no_brush' };
+    // Baked/shell brushes aren't user-editable and don't make sense as caves.
+    if (brush.id === 0 || !state.csg.brushes.includes(brush)) {
+        return { ok: false, reason: 'not_user_brush' };
+    }
+    brush.isCaveEnvelope = !brush.isCaveEnvelope;
+    updateEnvelopePreviews();
+    return { ok: true, brush, enabled: brush.isCaveEnvelope };
 }
 
 // ─── Hole / Door Modal Tool ──────────────────────────────────────────

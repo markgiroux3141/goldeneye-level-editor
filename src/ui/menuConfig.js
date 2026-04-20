@@ -16,6 +16,7 @@ export function buildMenuTree() {
                 { label: 'Simple Stairs', action: 'tool:simple_stairs', hotkey: hotkeyManager.getDisplayKey('tool_simple_stairs'), hotkeyAction: 'tool_simple_stairs' },
                 { label: 'Light',         action: 'tool:light',         hotkey: hotkeyManager.getDisplayKey('tool_light'),         hotkeyAction: 'tool_light' },
                 { label: 'Face Paint',    action: 'tool:face_paint',    hotkey: hotkeyManager.getDisplayKey('tool_face_paint'),    hotkeyAction: 'tool_face_paint' },
+                { label: 'Cave Envelope', action: 'brush:toggle_cave_envelope', hotkey: hotkeyManager.getDisplayKey('toggle_cave_envelope'), hotkeyAction: 'toggle_cave_envelope' },
             ],
         },
         {

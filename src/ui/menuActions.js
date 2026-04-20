@@ -6,7 +6,7 @@ import { state } from '../state.js';
 import { TEXTURE_SCHEMES } from '../scene/textureSchemes.js';
 import { gridHelper } from '../scene/setup.js';
 import { setTool } from '../tools/ToolManager.js';
-import { setHoleMode, setFacePaintMode } from '../csg/csgActions.js';
+import { setHoleMode, setFacePaintMode, toggleCaveEnvelope } from '../csg/csgActions.js';
 import { PLATFORM_STYLES } from '../geometry/platformStyles.js';
 import { exportSceneToGLB } from '../io/GLBExporter.js';
 
@@ -28,6 +28,17 @@ export function initMenuActions(cbs) {
         } else if (actionId === 'file:export_glb') {
             exportSceneToGLB();
             callbacks.showMessage('Exported level.glb');
+        } else if (actionId === 'brush:toggle_cave_envelope') {
+            const r = toggleCaveEnvelope();
+            if (r.ok) {
+                callbacks.showMessage(r.enabled
+                    ? `Brush ${r.brush.id} → cave envelope`
+                    : `Brush ${r.brush.id} → normal CSG`);
+            } else if (r.reason === 'no_selection' || r.reason === 'no_brush') {
+                callbacks.showMessage('Select a face first to mark its brush as cave envelope');
+            } else {
+                callbacks.showMessage('Baked/shell brushes cannot be cave envelopes');
+            }
         }
     });
 }

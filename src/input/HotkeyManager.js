@@ -31,6 +31,7 @@ const DEFAULT_BINDINGS = {
     'toggle_grounded':  'KeyF',
     'toggle_railings':  'KeyR',
     'toggle_grid':      'KeyH',
+    'toggle_cave_envelope': 'KeyJ',
     'escape':           'Escape',
 };
 
@@ -62,6 +63,7 @@ const ACTION_LABELS = {
     'toggle_grounded':  'Toggle Grounded',
     'toggle_railings':  'Toggle Railings',
     'toggle_grid':      'Toggle Grid Lines',
+    'toggle_cave_envelope': 'Toggle Cave Envelope (selected brush)',
     'escape':           'Cancel / Deselect',
 };
 

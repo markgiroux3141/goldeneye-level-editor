@@ -1,5 +1,6 @@
 use crate::chunk::{Chunk, CHUNK_SIZE};
 use crate::chunk_window::ChunkWindow;
+use crate::clip::BoundaryClip;
 use crate::noise::fbm3d;
 use hashbrown::{HashMap, HashSet};
 
@@ -60,7 +61,11 @@ impl World {
         }
     }
 
-    pub fn build_window(&self, cx: i32, cy: i32, cz: i32) -> ChunkWindow<'_> {
+    pub fn build_window<'a>(
+        &'a self,
+        cx: i32, cy: i32, cz: i32,
+        clip: Option<&'a BoundaryClip>,
+    ) -> ChunkWindow<'a> {
         ChunkWindow {
             chunks: [
                 self.get_chunk(cx    , cy    , cz    ),
@@ -73,6 +78,11 @@ impl World {
                 self.get_chunk(cx + 1, cy + 1, cz + 1),
             ],
             default_density: self.default_density,
+            base_cx: cx,
+            base_cy: cy,
+            base_cz: cz,
+            voxel_size: self.voxel_size,
+            clip,
         }
     }
 

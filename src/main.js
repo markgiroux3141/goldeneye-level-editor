@@ -32,6 +32,7 @@ import { handleTerrainClick, handleTerrainMouseUp, handleTerrainMouseMove, handl
 import { handleIndoorKey } from './tools/indoorKeys.js';
 import { handleTerrainKey } from './tools/terrainKeys.js';
 import { initCSGWasm } from './core/csg/wasmCSG.js';
+import { initCaveWasm } from './core/cave/wasmCave.js';
 
 // ============================================================
 // INIT
@@ -156,7 +157,7 @@ onKeyDown((e) => {
 // INIT — load schemes, then start
 // ============================================================
 (async () => {
-    await Promise.all([initCSGWasm(), loadTextureSchemes()]);
+    await Promise.all([initCSGWasm(), initCaveWasm(), loadTextureSchemes()]);
     __mark('wasmAndSchemes');
     initMaterials();
     __mark('initMaterials');
